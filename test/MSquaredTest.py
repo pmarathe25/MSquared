@@ -13,10 +13,10 @@ class MSquaredTest(unittest.TestCase):
         # Also compile with c++-17.
         make_gen.add_cflags("-std=c++17")
         # Create a new target with the path to desired executable and use the source file(s) involved.
-        make_gen["test/test"] = m2.add_executable("test/test.cpp")
+        make_gen["test/test"] = make_gen.add_executable("test/test.cpp")
         # Create a clean target passing in extra files to be deleted
         # (by default, only the build directory is emptied)
-        make_gen["clean"] = m2.add_clean()
+        make_gen["clean"] = make_gen.add_clean("test/test")
         # Generate the makefile
         make_gen.generate("makefile")
 
