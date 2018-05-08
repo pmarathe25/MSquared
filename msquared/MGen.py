@@ -6,8 +6,8 @@ def test_func():
 
 class MGen(object):
     def __init__(self, build_dir: str = "build/"):
-        self.targets : Dict[str, List(str)]
-        self.phony_targets : List
+        self.targets : Dict[str, List(str)] = {}
+        self.phony_targets : List(str) = []
         self.global_cflags = "-fPIC -c -march=native"
         self.global_lib_lflags = "-shared -march=native"
         self.global_exec_lflags = "-march=native"
@@ -16,7 +16,6 @@ class MGen(object):
     def __getitem__(self, index):
         return self.targets[index]
 
-    """ Functions for generating targets_contents. """
     def add_flags(self, flags: str) -> None:
         self.add_cflags(flags)
         self.add_lib_lflags(flags)
@@ -37,8 +36,13 @@ class MGen(object):
 
     def add_clean(self, files: List[str] = []):
         files = _handle_str(files)
+        self.targets["clean"] = "rm -r " + self.build_dir + " ".join(files)
+        self.phony_targets.append("clean")
         pass
 
     def generate(self, filename: str):
-        print(self.targets)
+        makefile: str = ""
+        for target_name, target_value in self.targets.items():
+            makefile += target_name + '\n\t' + target_value
+        print(makefile)
         pass
