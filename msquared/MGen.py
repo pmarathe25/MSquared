@@ -6,12 +6,12 @@ def test_func():
 
 class MGen(object):
     def __init__(self, build_dir: str = "build/"):
-        self.targets : Dict[str, List(str)] = {}
-        self.phony_targets : List(str) = []
-        self.global_cflags = "-fPIC -c -march=native"
-        self.global_lib_lflags = "-shared -march=native"
-        self.global_exec_lflags = "-march=native"
-        self.build_dir = build_dir
+        self.targets: Dict[str, str] = {}
+        self.phony_targets: List(str) = []
+        self.global_cflags: str = "-fPIC -c"
+        self.global_lib_lflags: str = "-shared"
+        self.global_exec_lflags: str = ""
+        self.build_dir: str = build_dir
 
     def __getitem__(self, index):
         return self.targets[index]
@@ -36,7 +36,7 @@ class MGen(object):
 
     def add_clean(self, files: List[str] = []):
         files = _handle_str(files)
-        self.targets["clean"] = "rm -r " + self.build_dir + " ".join(files)
+        self.targets["clean"] = "rm -r " + self.build_dir + " " + " ".join(files)
         self.phony_targets.append("clean")
         pass
 
