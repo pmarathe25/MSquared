@@ -1,9 +1,9 @@
-from msquared._utils import _handle_str
+from msquared._utils import _handle_str, _locate_files
 from typing import Dict, List
 import glob
 
 class MGen(object):
-    def __init__(self, build_dir: str = "build/*", project_dirs: List[str] = []):
+    def __init__(self, project_dirs: List[str] = [], build_dir: str = "build/*"):
         project_dirs = _handle_str(project_dirs)
         self.targets: Dict[str, str] = {}
         self.phony_targets: List[str] = []
@@ -12,13 +12,13 @@ class MGen(object):
         self.lib_lflags: str = "-shared "
         self.exec_lflags: str = ""
         self.build_dir: str = build_dir
-        self.project_dirs: List[str] = glob.glob("**/") + project_dirs
-        print(self.project_dirs)
+        self._project_dirs: List[str] = project_dirs
+        self._project_files: List[str] = _locate_files(self._project_dirs)
 
     def __getitem__(self, index):
         return self.targets[index]
 
-    # Figures out what internal headers a source file depends on.
+    # Figures out what internal headers (i.e. in project_dirs) a source file depends on.
     def _internal_header_dependencies(source_file: str):
         pass
 

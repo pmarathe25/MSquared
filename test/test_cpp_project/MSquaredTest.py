@@ -4,7 +4,8 @@ import msquared as m2
 
 class MSquaredTest(unittest.TestCase):
     def setUp(self):
-        self.make_gen = m2.MGen()
+        # Add this directory to the project.
+        self.make_gen = m2.MGen("./")
 
     def test_generate_project_makefile(self):
         # Make sure we compile/link with optimizations enabled.
