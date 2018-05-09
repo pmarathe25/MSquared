@@ -1,20 +1,29 @@
 from msquared._utils import _handle_str
 from typing import Dict, List
-
-def test_func():
-    pass
+import glob
 
 class MGen(object):
-    def __init__(self, build_dir: str = "build/"):
+    def __init__(self, build_dir: str = "build/*", project_dirs: List[str] = []):
+        project_dirs = _handle_str(project_dirs)
         self.targets: Dict[str, str] = {}
-        self.phony_targets: List(str) = []
-        self.global_cflags: str = "-fPIC -c"
-        self.global_lib_lflags: str = "-shared"
-        self.global_exec_lflags: str = ""
+        self.phony_targets: List[str] = []
+        self.cc = "g++ "
+        self.cflags: str = "-fPIC -c "
+        self.lib_lflags: str = "-shared "
+        self.exec_lflags: str = ""
         self.build_dir: str = build_dir
+        self.project_dirs: List[str] = glob.glob("**/") + project_dirs
+        print(self.project_dirs)
 
     def __getitem__(self, index):
         return self.targets[index]
+
+    # Figures out what internal headers a source file depends on.
+    def _internal_header_dependencies(source_file: str):
+        pass
+
+    def set_compiler(self, compiler: str) -> None:
+        self.cc = compiler
 
     def add_flags(self, flags: str) -> None:
         self.add_cflags(flags)
@@ -22,13 +31,13 @@ class MGen(object):
         self.add_exec_lflags(flags)
 
     def add_cflags(self, flags: str) -> None:
-        self.global_cflags += " " + flags
+        self.cflags += " " + flags
 
     def add_lib_lflags(self, flags: str) -> None:
-        self.global_lib_lflags += " " + flags
+        self.lib_lflags += " " + flags
 
     def add_exec_lflags(self, flags: str) -> None:
-        self.global_exec_lflags += " " + flags
+        self.exec_lflags += " " + flags
 
     def add_executable(self, exec_name: str, dependencies: List[str]):
         dependencies = _handle_str(dependencies)
@@ -38,11 +47,20 @@ class MGen(object):
         files = _handle_str(files)
         self.targets["clean"] = "rm -r " + self.build_dir + " " + " ".join(files)
         self.phony_targets.append("clean")
-        pass
 
     def generate(self, filename: str):
         makefile: str = ""
+        if self.phony_targets:
+            makefile += ".PHONY:"
+            # Declare targets as being phony
+            for phony_target in self.phony_targets:
+                makefile += " " + phony_target
+            makefile += '\n'
+        # Create targets
         for target_name, target_value in self.targets.items():
-            makefile += target_name + '\n\t' + target_value
+            makefile += '\n' + target_name + '\n\t' + target_value
+        # DEBUG:
         print(makefile)
-        pass
+        # Write to output file.
+        with open(filename, "w") as outf:
+            outf.write(makefile)
