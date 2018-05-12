@@ -1,4 +1,3 @@
 .PHONY: clean
-
-clean
-	rm -r build/* test/test
+clean:
+	rm -rf build/* test/test

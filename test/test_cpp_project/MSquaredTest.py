@@ -16,9 +16,11 @@ class MSquaredTest(unittest.TestCase):
         self.make_gen.add_executable("test/test", "test/test.cpp")
         # Create a clean target passing in extra files to be deleted
         # (by default, only the build directory is emptied)
-        self.make_gen.add_clean("test/test")
+        self.make_gen.clean_files("test/test")
         # Generate the makefile
-        self.make_gen.generate("./makefile")
+        mfile = self.make_gen.generate()
+        # DEBUG:
+        print(mfile)
 
     def tearDown(self):
         pass
