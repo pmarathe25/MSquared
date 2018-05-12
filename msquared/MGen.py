@@ -68,9 +68,6 @@ class MGen(object):
     def find_project_file(self, filename: str) -> List[str]:
         # For paths, get relative path.
         filename = os.path.relpath(filename) if '/' in filename else filename
-
-        print(filename)
-
         possible_matches: List[str] = []
         for project_filename in self._project_files:
             if filename == project_filename or filename == project_filename.split('/')[-1]:
