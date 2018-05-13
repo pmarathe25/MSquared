@@ -38,9 +38,9 @@ def _find_included_files(filename: str):
     return included_files
 
 # If there are multiple matching files, the user needs to specify which one to use.
-def _prompt_user_disambiguate_dependency(filename: str, matching_project_files: List[str]) -> str:
+def _prompt_user_disambiguate_dependency(dependency: str, matching_project_files: List[str], source_file: str) -> str:
     # Make sure that the selected file actually corresponds to one of the choices.
-    matched_file = input("For dependency '" + filename + "', found multiple candidates: "
+    matched_file = input("For dependency '" + dependency + "' of '" + source_file + "', found multiple candidates: "
         + str(matching_project_files) + ". Please choose one.\n>>> ")
     potential_matches = _find_file_in_list(matched_file, matching_project_files)
     while len(potential_matches) != 1:

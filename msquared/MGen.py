@@ -23,41 +23,44 @@ class MGen(object):
         self.cc = "g++ "
         self.cflags: str = "-fPIC -c "
         self.lflags: str = ""
+        # Keep track of internal dependencies so we don't incur Disk I/O every time.
+        self._internal_dependencies: Dict[str, List[str]] = {}
 
     def __getitem__(self, index):
         return self.targets[index]
 
-    def _get_makefile_header():
+    def _get_makefile_header() -> str:
         return "# Automatically generated Makefile. DO NOT MODIFY.\n# Generated on " + str(datetime.today()) + '\n\n'
 
     # Figures out whether a dependency is internal or not.
-    def _check_is_internal_dependency(self, filename: str) -> Union[str, None]:
-        matching_project_files: List[str] = _find_file_in_list(filename, self._project_files)
+    def _check_is_internal_dependency(self, dependency: str, source_file: str) -> Union[str, None]:
+        matching_project_files: List[str] = _find_file_in_list(dependency, self._project_files)
         matched_file: str = None
         if len(matching_project_files) == 1:
             # Found a matching file in the project!
             matched_file = matching_project_files[0]
         elif len(matching_project_files) > 1:
             # If there is more than one match, prompt user to disambiguate.
-            matched_file = _prompt_user_disambiguate_dependency(filename, matching_project_files)
+            matched_file = _prompt_user_disambiguate_dependency(dependency, matching_project_files, source_file)
         return matched_file
 
     # Figures out what internal headers (i.e. in project_dirs) a source file depends on.
-    def _internal_dependencies(self, source_file: str) -> List[str]:
-        # Keep track of dependencies found so far.
-        dependencies: List[str] = [source_file]
-        # For each dependent file, scan through and see if its dependencies are located in the project.
-        for filename in dependencies:
-            nested_dependencies: List[str] = _find_included_files(filename)
-            for nested_filename in nested_dependencies:
-                # For each of these, check if it is in the project.
-                # If so, append to the list of dependencies to look through.
-                new_dependency = self._check_is_internal_dependency(nested_filename)
-                if new_dependency and new_dependency not in dependencies:
-                    # Don't check duplicates repeatedly.
-                    dependencies.append(new_dependency)
-        # Return a list of unique dependencies.
-        return dependencies
+    def _recursive_find_dependencies(self, source_file: str) -> List[str]:
+        if source_file in self._internal_dependencies:
+            return self._internal_dependencies[source_file]
+        # Not cached, compute dependencies.
+        all_dependencies: Set[str] = set()
+        dependencies: List[str] = _find_included_files(source_file)
+        for dependency in dependencies:
+            # If this isn't an internal dependency (or already added), we don't care about it.
+            dependency = self._check_is_internal_dependency(dependency, source_file)
+            if dependency and dependency not in all_dependencies:
+                # Otherwise, add this dependency and its children.
+                all_dependencies.add(dependency)
+                all_dependencies.update(self._recursive_find_dependencies(dependency))
+        # Cache and return.
+        self._internal_dependencies[source_file] = list(all_dependencies)
+        return self._internal_dependencies[source_file]
 
     def set_compiler(self, compiler: str) -> None:
         self.cc = compiler
@@ -119,11 +122,10 @@ class MGen(object):
                     object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
                     obj_files.append(object_name)
                     # And then figure out #include dependencies.
-                    dependencies = self._internal_dependencies(source_file)
-                    # Omit first dependency (Original source file)
-                    include_paths = set([os.path.dirname(dep) for dep in dependencies[1:]])
+                    dependencies = self._recursive_find_dependencies(source_file)
+                    include_paths = set([os.path.dirname(dep) for dep in dependencies])
                     # Target.
-                    makefile += object_name + ": " + " ".join(dependencies) + '\n'
+                    makefile += object_name + ": " + source_file + " " + " ".join(dependencies) + '\n'
                     # Now the actual compilation step - make sure headers are visible!
                     makefile += '\t' + self.cc + self.cflags + source_file + " -o " \
                         + object_name + " -I" + " -I".join(include_paths) + '\n\n'
