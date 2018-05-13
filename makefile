@@ -7,7 +7,7 @@ uninstall:
 	rm /home/pranav/.local/lib/python3.6/site-packages/msquared-0.0.1-py3.6.egg
 
 test: install
-	cd test/test_cpp_project/ && ./MSquaredTest.py
+	cd test/ && ./MSquaredTest.py
 
 clean:
 	rm -r build/ dist/ msquared.egg-info/
