@@ -72,17 +72,21 @@ class MGen(object):
     def add_lflags(self, flags: str) -> None:
         self.lflags += flags + " "
 
-    def add_executable(self, exec_name: str, source_files: List[str]):
+    def add_executable(self, exec_name: str, source_files: List[str], clean: bool = False):
+        if clean:
+            self.add_clean_files(exec_name)
         source_files = _handle_str(source_files)
         self.targets[exec_name] = source_files
 
     # The only distinction between executables and libraries
     # is that libraries are added to the beginning of targets.
-    def add_library(self, lib_name: str, source_files: List[str]):
+    def add_library(self, lib_name: str, source_files: List[str], clean: bool = False):
+        if clean:
+            self.add_clean_files(exec_name)
         source_files = _handle_str(source_files)
         self.targets[lib_name] = source_files
 
-    def clean_files(self, files: List[str] = []):
+    def add_clean_files(self, files: List[str] = []):
         files = _handle_str(files)
         self.temporary_files.extend(files)
 
@@ -103,13 +107,17 @@ class MGen(object):
                 # Need to create an intermediate .o target for each source file.
                 obj_files: List[str] = []
                 for source_file in sources:
-                    dependencies = self._internal_dependencies(source_file)
                     # Generate the corresponding object file by replacing any extension with '.o'.
                     object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
                     obj_files.append(object_name)
+                    # And then figure out #include dependencies.
+                    dependencies = self._internal_dependencies(source_file)
+                    include_paths = set([os.path.dirname(dep) for dep in dependencies])
+                    # Target.
                     makefile += object_name + ": " + " ".join(dependencies) + '\n'
-                    # Now the actual compilation step.
-                    makefile += '\t' + self.cc + self.cflags + source_file + " -o " + object_name + '\n\n'
+                    # Now the actual compilation step - make sure headers are visible!
+                    makefile += '\t' + self.cc + self.cflags + source_file + " -o " \
+                        + object_name + " -I".join(include_paths) + '\n\n'
                 # Now that the objects exist, we can add the executable itself.
                 makefile += target + ": " + " ".join(obj_files) + '\n'
                 # And compile to executable.
