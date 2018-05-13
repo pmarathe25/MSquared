@@ -1,8 +1,11 @@
-from msquared._utils import _handle_str, _locate_files_in_paths, _find_included_files, _find_file_in_list
+from msquared._utils import _handle_str, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency
 from typing import Dict, List, Set, Union
+from datetime import datetime
 import os
 
 class MGen(object):
+    _MAKEFILE_HEADER = "# Automatically generated file. DO NOT MODIFY.\n# Generated on " + str(datetime.today()) + '\n\n'
+
     def __init__(self, project_dirs: List[str] = [], build_dir: str = "build"):
         project_dirs = _handle_str(project_dirs)
         # Targets
@@ -15,7 +18,8 @@ class MGen(object):
         # Project options
         self.build_dir: str = build_dir
         self._project_dirs: List[str] = project_dirs
-        self._project_files: List[str] = _locate_files_in_paths(self._project_dirs)
+        # This is populated just before generation.
+        self._project_files: List[str] = []
         # Compiler options
         self.cc = "g++ "
         self.cflags: str = "-fPIC -c "
@@ -26,18 +30,6 @@ class MGen(object):
 
     # Figures out whether a dependency is internal or not.
     def _check_is_internal_dependency(self, filename: str) -> Union[str, None]:
-        # If there are multiple matching files, the user needs to specify which one to use.
-        def prompt_user_disambiguate_dependency(self, filename: str, matching_project_files: List[str]) -> str:
-            # Make sure that the selected file actually corresponds to one of the choices.
-            matched_file = input("For dependency '" + filename + "', found multiple candidates: "
-                + str(matching_project_files) + ". Please choose one.\n>>> ")
-            potential_matches = _find_file_in_list(matched_file, matching_project_files)
-            while len(potential_matches) != 1:
-                matched_file = input("ERROR: '" + matched_file + "' did not match one of "
-                    + str(matching_project_files) + ". Try providing the full path.\n>>> ")
-                potential_matches = _find_file_in_list(matched_file, matching_project_files)
-            return potential_matches[0]
-
         matching_project_files: List[str] = _find_file_in_list(filename, self._project_files)
         matched_file: str = None
         if len(matching_project_files) == 1:
@@ -45,7 +37,7 @@ class MGen(object):
             matched_file = matching_project_files[0]
         elif len(matching_project_files) > 1:
             # If there is more than one match, prompt user to disambiguate.
-            matched_file = prompt_user_disambiguate_dependency(self, filename, matching_project_files)
+            matched_file = _prompt_user_disambiguate_dependency(filename, matching_project_files)
         return matched_file
 
     # Figures out what internal headers (i.e. in project_dirs) a source file depends on.
@@ -73,10 +65,10 @@ class MGen(object):
         self.add_lflags(flags)
 
     def add_cflags(self, flags: str) -> None:
-        self.cflags += " " + flags
+        self.cflags += flags + " "
 
     def add_lflags(self, flags: str) -> None:
-        self.lflags += " " + flags
+        self.lflags += flags + " "
 
     def add_executable(self, exec_name: str, source_files: List[str]):
         source_files = _handle_str(source_files)
@@ -87,25 +79,35 @@ class MGen(object):
         self.temporary_files.extend(files)
 
     def generate(self) -> str:
-        makefile: str = ""
+        self._project_files = _locate_files_in_paths(self._project_dirs)
+        makefile: str = MGen._MAKEFILE_HEADER
+        # Phony targets should be at the top of the makefile.
         if self.phony_targets:
             makefile += ".PHONY:"
             # Declare targets as being phony
             for phony_target in self.phony_targets:
                 makefile += " " + phony_target
-            makefile += '\n'
+            makefile += "\n\n"
         # First, handle libraries.
 
         # Then executables.
         for target, sources in self.executables.items():
             # Need to create an intermediate .o target for each source file.
+            obj_files: List[str] = []
             for source_file in sources:
-                print("Finding deps for " + source_file)
                 dependencies = self._internal_dependencies(source_file)
-                print(dependencies)
-
+                # Generate the corresponding object file by replacing any extension with '.o'.
+                object_name = os.path.splitext(source_file)[0] + ".o"
+                obj_files.append(object_name)
+                makefile += object_name + ": " + " ".join(dependencies) + '\n'
+                # Now the actual compilation step.
+                makefile += '\t' + self.cc + self.cflags + source_file + " -o " + object_name + '\n\n'
+            # Now that the objects exist, we can add the executable itself.
+            makefile += target + ": " + " ".join(obj_files) + '\n'
+            # And compile to executable.
+            makefile += '\t' + self.cc + self.cflags + " ".join(obj_files) + " -o " + target + '\n\n'
         # Clean target
-        makefile += "clean:\n\trm -rf " + " ".join(self.temporary_files)
+        makefile += "clean:\n\trm -rf " + " ".join(self.temporary_files) + '\n\n'
         # And finally custom targets.
 
         # Done
