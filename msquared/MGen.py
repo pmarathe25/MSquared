@@ -33,8 +33,8 @@ class MGen(object):
             matched_file = input("For dependency " + filename + ", found: "
             + str(matching_project_files) + ". Please choose one.\n>>> ")
             while len(self.find_project_file(matched_file)) != 1:
-                matched_file = input("ERROR: '" + matched_file + "' not found in project. "
-                "Please enter a valid file name.\n>>> ")
+                matched_file = input("ERROR: Could not locate '" + matched_file + "'. "
+                "Please enter a full path.\n>>> ")
             return matched_file
 
         matching_project_files: List[str] = self.find_project_file(filename)
@@ -66,8 +66,7 @@ class MGen(object):
 
     # Given the name/path of a file, find potential matches in this project.
     def find_project_file(self, filename: str) -> List[str]:
-        # For paths, get relative path.
-        filename = os.path.relpath(filename) if '/' in filename else filename
+        filename = os.path.relpath(filename)
         possible_matches: List[str] = []
         for project_filename in self._project_files:
             if filename == project_filename or filename == project_filename.split('/')[-1]:
