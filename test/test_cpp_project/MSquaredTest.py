@@ -15,6 +15,8 @@ class MSquaredTest(unittest.TestCase):
         # Create a new target with the path to desired executable and use the source file(s) involved.
         # Should be removed during clean!
         self.make_gen.add_executable("test/test", ["test/test.cpp", "src/source1.cpp", "src/source2.cpp"], clean=True)
+        # Add a custom target that will run the test executable.
+        self.make_gen.add_custom_target("test", dependencies="test/test", command="test/test")
         # Write the makefile
         self.make_gen.write("makefile")
         # DEBUG:

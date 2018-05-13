@@ -6,7 +6,7 @@ import os
 import re
 import glob
 
-def _handle_str(string_param: str) -> List[str]:
+def _str_to_list(string_param: str) -> List[str]:
     if isinstance(string_param, str):
         return [string_param]
     return string_param
