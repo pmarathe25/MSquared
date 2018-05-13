@@ -1,4 +1,4 @@
-from msquared._utils import _handle_str, _locate_files, _find_included_files
+from msquared._utils import _handle_str, _locate_files_in_paths, _find_included_files, _find_file_in_list
 from typing import Dict, List, Set, Union
 import os
 
@@ -15,7 +15,7 @@ class MGen(object):
         # Project options
         self.build_dir: str = build_dir
         self._project_dirs: List[str] = project_dirs
-        self._project_files: List[str] = _locate_files(self._project_dirs)
+        self._project_files: List[str] = _locate_files_in_paths(self._project_dirs)
         # Compiler options
         self.cc = "g++ "
         self.cflags: str = "-fPIC -c "
@@ -28,16 +28,17 @@ class MGen(object):
     def _check_is_internal_dependency(self, filename: str) -> Union[str, None]:
         # If there are multiple matching files, the user needs to specify which one to use.
         def prompt_user_disambiguate_dependency(self, filename: str, matching_project_files: List[str]) -> str:
-            matched_file: str = None
-            # Make sure that the selected file is actually in the project.
-            matched_file = input("For dependency " + filename + ", found: "
-            + str(matching_project_files) + ". Please choose one.\n>>> ")
-            while len(self.find_project_file(matched_file)) != 1:
-                matched_file = input("ERROR: Could not locate '" + matched_file + "'. "
-                "Please enter a full path.\n>>> ")
-            return matched_file
+            # Make sure that the selected file actually corresponds to one of the choices.
+            matched_file = input("For dependency '" + filename + "', found multiple candidates: "
+                + str(matching_project_files) + ". Please choose one.\n>>> ")
+            potential_matches = _find_file_in_list(matched_file, matching_project_files)
+            while len(potential_matches) != 1:
+                matched_file = input("ERROR: '" + matched_file + "' did not match one of "
+                    + str(matching_project_files) + ". Try providing the full path.\n>>> ")
+                potential_matches = _find_file_in_list(matched_file, matching_project_files)
+            return potential_matches[0]
 
-        matching_project_files: List[str] = self.find_project_file(filename)
+        matching_project_files: List[str] = _find_file_in_list(filename, self._project_files)
         matched_file: str = None
         if len(matching_project_files) == 1:
             # Found a matching file in the project!
@@ -63,16 +64,6 @@ class MGen(object):
                     dependencies.append(new_dependency)
         # Return a list of unique dependencies.
         return dependencies
-
-    # Given the name/path of a file, find potential matches in this project.
-    def find_project_file(self, filename: str) -> List[str]:
-        filename = os.path.relpath(filename)
-        possible_matches: List[str] = []
-        for project_filename in self._project_files:
-            if filename == project_filename or filename == project_filename.split('/')[-1]:
-                # Either the path matches exactly, or the file name patches exactly.
-                possible_matches.append(project_filename)
-        return possible_matches
 
     def set_compiler(self, compiler: str) -> None:
         self.cc = compiler
