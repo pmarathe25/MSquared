@@ -17,10 +17,10 @@ class MSquaredTest(unittest.TestCase):
         # Create a clean target passing in extra files to be deleted
         # (by default, only the build directory is emptied)
         self.make_gen.clean_files("test/test")
-        # Generate the makefile
-        mfile = self.make_gen.generate()
+        # Write the makefile
+        self.make_gen.write("makefile")
         # DEBUG:
-        print(mfile)
+        print(self.make_gen.generate())
 
     def tearDown(self):
         pass

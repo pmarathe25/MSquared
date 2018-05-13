@@ -2,24 +2,23 @@ from msquared._utils import _handle_str, _locate_files_in_paths, _find_included_
 from typing import Dict, List, Set, Union
 from datetime import datetime
 import os
+from stat import S_IWRITE, S_IREAD, S_IRGRP, S_IROTH
 
 class MGen(object):
-    _MAKEFILE_HEADER = "# Automatically generated file. DO NOT MODIFY.\n# Generated on " + str(datetime.today()) + '\n\n'
-
     def __init__(self, project_dirs: List[str] = [], build_dir: str = "build"):
         project_dirs = _handle_str(project_dirs)
-        # Targets
-        # TODO:
-        # self.custom_targets: Dict[str, str] = {}
-        self.temporary_files: List[str] = [build_dir + "/*"]
-        self.phony_targets: List[str] = ["clean"]
-        # Maintains a mapping of executables to their constituent source files.
-        self.executables: Dict[str, List[str]] = {}
         # Project options
-        self.build_dir: str = build_dir
         self._project_dirs: List[str] = project_dirs
         # This is populated just before generation.
         self._project_files: List[str] = []
+        # Temporary storage - create the directory during generation if it does not exist.
+        self.build_dir: str = build_dir
+        self.temporary_files: List[str] = [build_dir + "/*"]
+        # TODO: Custom targets
+        # self.custom_targets: Dict[str, str] = {}
+        self.phony_targets: List[str] = ["clean"]
+        # Maintains a mapping of targets to their constituent source files.
+        self.targets: Dict[str, List[str]] = {}
         # Compiler options
         self.cc = "g++ "
         self.cflags: str = "-fPIC -c "
@@ -27,6 +26,9 @@ class MGen(object):
 
     def __getitem__(self, index):
         return self.targets[index]
+
+    def _get_makefile_header():
+        return "# Automatically generated Makefile. DO NOT MODIFY.\n# Generated on " + str(datetime.today()) + '\n\n'
 
     # Figures out whether a dependency is internal or not.
     def _check_is_internal_dependency(self, filename: str) -> Union[str, None]:
@@ -72,42 +74,64 @@ class MGen(object):
 
     def add_executable(self, exec_name: str, source_files: List[str]):
         source_files = _handle_str(source_files)
-        self.executables[exec_name] = source_files
+        self.targets[exec_name] = source_files
+
+    # The only distinction between executables and libraries
+    # is that libraries are added to the beginning of targets.
+    def add_library(self, lib_name: str, source_files: List[str]):
+        source_files = _handle_str(source_files)
+        self.targets[lib_name] = source_files
 
     def clean_files(self, files: List[str] = []):
         files = _handle_str(files)
         self.temporary_files.extend(files)
 
     def generate(self) -> str:
-        self._project_files = _locate_files_in_paths(self._project_dirs)
-        makefile: str = MGen._MAKEFILE_HEADER
-        # Phony targets should be at the top of the makefile.
-        if self.phony_targets:
-            makefile += ".PHONY:"
-            # Declare targets as being phony
-            for phony_target in self.phony_targets:
-                makefile += " " + phony_target
-            makefile += "\n\n"
-        # First, handle libraries.
+        def process_phony_targets() -> str:
+            makefile: str = ""
+            if self.phony_targets:
+                makefile += ".PHONY:"
+                # Declare targets as being phony
+                for phony_target in self.phony_targets:
+                    makefile += " " + phony_target
+                makefile += "\n\n"
+            return makefile
 
-        # Then executables.
-        for target, sources in self.executables.items():
-            # Need to create an intermediate .o target for each source file.
-            obj_files: List[str] = []
-            for source_file in sources:
-                dependencies = self._internal_dependencies(source_file)
-                # Generate the corresponding object file by replacing any extension with '.o'.
-                object_name = os.path.splitext(source_file)[0] + ".o"
-                obj_files.append(object_name)
-                makefile += object_name + ": " + " ".join(dependencies) + '\n'
-                # Now the actual compilation step.
-                makefile += '\t' + self.cc + self.cflags + source_file + " -o " + object_name + '\n\n'
-            # Now that the objects exist, we can add the executable itself.
-            makefile += target + ": " + " ".join(obj_files) + '\n'
-            # And compile to executable.
-            makefile += '\t' + self.cc + self.cflags + " ".join(obj_files) + " -o " + target + '\n\n'
+        def process_real_targets() -> str:
+            makefile: str = ""
+            for target, sources in self.targets.items():
+                # Need to create an intermediate .o target for each source file.
+                obj_files: List[str] = []
+                for source_file in sources:
+                    dependencies = self._internal_dependencies(source_file)
+                    # Generate the corresponding object file by replacing any extension with '.o'.
+                    object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
+                    obj_files.append(object_name)
+                    makefile += object_name + ": " + " ".join(dependencies) + '\n'
+                    # Now the actual compilation step.
+                    makefile += '\t' + self.cc + self.cflags + source_file + " -o " + object_name + '\n\n'
+                # Now that the objects exist, we can add the executable itself.
+                makefile += target + ": " + " ".join(obj_files) + '\n'
+                # And compile to executable.
+                makefile += '\t' + self.cc + self.cflags + " ".join(obj_files) + " -o " + target + '\n\n'
+            return makefile
+
+        def process_clean_targets() -> str:
+            makefile: str = ""
+            return "clean:\n\trm -rf " + " ".join(self.temporary_files) + '\n\n'
+
+        # Find out what's in the project now.
+        self._project_files = _locate_files_in_paths(self._project_dirs)
+        # Create build directory if it doesn't exist.
+        os.makedirs(self.build_dir, exist_ok=True)
+        # Generate makefile.
+        makefile: str = MGen._get_makefile_header()
+        # Phony targets should be at the top of the makefile.
+        makefile += process_phony_targets()
+        # Handle libraries and executables.
+        makefile += process_real_targets()
         # Clean target
-        makefile += "clean:\n\trm -rf " + " ".join(self.temporary_files) + '\n\n'
+        makefile += process_clean_targets()
         # And finally custom targets.
 
         # Done
@@ -115,6 +139,10 @@ class MGen(object):
 
     def write(self, filename: str) -> None:
         makefile = self.generate()
+        # Unlock file.
+        os.chmod(filename, S_IWRITE|S_IRGRP|S_IROTH)
         with open(filename, "w") as outf:
             # Write to output file.
             outf.write(makefile)
+        # Mark the file as read-only so it's not accidentally modified.
+        os.chmod(filename, S_IREAD|S_IRGRP|S_IROTH)
