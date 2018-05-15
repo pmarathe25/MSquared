@@ -6,6 +6,9 @@ import os
 import re
 import glob
 
+def _ends_with(input_string: str, ending: str) -> bool:
+    return input_string.strip()[-len(ending):] == ending
+
 def _str_to_list(string_param: str) -> List[str]:
     if isinstance(string_param, str):
         return [string_param]

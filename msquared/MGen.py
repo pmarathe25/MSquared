@@ -1,8 +1,22 @@
-from msquared._utils import _str_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency
+from msquared._utils import _str_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with
 from typing import Dict, List, Set, Union
 from datetime import datetime
 import os
 from stat import S_IWRITE, S_IREAD, S_IRGRP, S_IROTH
+from enum import IntEnum
+
+class TargetType(IntEnum):
+    INTERMEDIATE = 0
+    LIBRARY = 1
+    EXECUTABLE = 2
+
+class Target(object):
+    def __init__(self, type: TargetType, sources: List[str], obj_files: Set[str] = set(), pre_flags: str = "", post_flags: str = ""):
+        self.type: TargetType = type
+        self.sources: List[str] = sources
+        self.pre_flags: str = pre_flags
+        self.post_flags: str = post_flags
+        self.obj_files: Set[str] = obj_files
 
 class MGen(object):
     def __init__(self, project_dirs: List[str] = [], build_dir: str = "build"):
@@ -18,7 +32,8 @@ class MGen(object):
         self.custom_targets: Dict[str, str] = {}
         self.phony_targets: List[str] = ["clean"]
         # Maintains a mapping of targets to their constituent source files.
-        self.targets: Dict[str, List[str]] = {}
+        # Also keeps track of the type of the target.
+        self.targets: Dict[str, Target] = {}
         # Compiler options
         self.cc = "g++ "
         self.cflags: str = "-fPIC -c "
@@ -76,17 +91,29 @@ class MGen(object):
     def add_lflags(self, flags: str) -> None:
         self.lflags += flags + " "
 
-    def add_executable(self, exec_name: str, source_files: List[str], clean: bool = False) -> None:
+    def add_executable(self, exec_name: str, source_files: List[str], clean: bool = False, libraries: List[str] = []) -> None:
         if clean:
             self.add_clean_files(exec_name)
-        source_files = _str_to_list(source_files)
-        self.targets[exec_name] = source_files
+        libraries: List[str] = _str_to_list(libraries)
+        source_files: List[str] = _str_to_list(source_files)
+
+        obj_files: Set[str] = set()
+        lib_flags: str = ""
+        for lib in libraries:
+            lib = lib.strip()
+            # For .so's, link normally. Otherwise, conditionall prepend with -l.
+            if ".so" in lib:
+                obj_files.add(lib)
+            else:
+                lib_flags += ("-l" if lib[0:2] != "-l" else "") + lib
+        self.targets[exec_name] = Target(TargetType.EXECUTABLE, source_files, obj_files=obj_files, post_flags=lib_flags)
 
     def add_library(self, lib_name: str, source_files: List[str], clean: bool = False) -> None:
+        pre_flags = "-shared " if _ends_with(lib_name, ".so") else ""
         if clean:
-            self.add_clean_files(exec_name)
+            self.add_clean_files(lib_name)
         source_files = _str_to_list(source_files)
-        self.targets[lib_name] = source_files
+        self.targets[lib_name] = Target(TargetType.LIBRARY, source_files, pre_flags=pre_flags)
 
     def add_custom_target(self, target_name: str, dependencies: List[str] = [], command: List[str] = [], phony: bool = True) -> None:
         if phony:
@@ -113,25 +140,30 @@ class MGen(object):
 
         def process_real_targets() -> str:
             makefile: str = ""
-            for target, sources in self.targets.items():
+            # Keep a mapping of what the final targets look like. In the order INTERMEDIATE, LIBRARY, EXECUTABLE.
+            final_targets: List[Dict[str, str]] = [{}, {}, {}]
+            for target_name, target in self.targets.items():
                 # Need to create an intermediate .o target for each source file.
-                obj_files: List[str] = []
-                for source_file in sources:
+                for source_file in target.sources:
                     # Generate the corresponding object file by replacing any extension with '.o'.
                     object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
-                    obj_files.append(object_name)
+                    target.obj_files.add(object_name)
                     # And then figure out #include dependencies.
                     dependencies = self._recursive_find_dependencies(source_file)
                     include_paths = set([os.path.dirname(dep) for dep in dependencies])
-                    # Target.
-                    makefile += object_name + ": " + source_file + " " + " ".join(dependencies) + '\n'
-                    # Now the actual compilation step - make sure headers are visible!
-                    makefile += '\t' + self.cc + self.cflags + source_file + " -o " \
-                        + object_name + " -I" + " -I".join(include_paths) + '\n\n'
-                # Now that the objects exist, we can add the executable itself.
-                makefile += target + ": " + " ".join(obj_files) + '\n'
-                # And compile to executable.
-                makefile += '\t' + self.cc + self.lflags + " ".join(obj_files) + " -o " + target + '\n\n'
+                    if object_name not in final_targets:
+                        # No need for duplicate intermediate objects. Make sure headers are visible with -I!
+                        final_targets[TargetType.INTERMEDIATE][object_name] = object_name + ": " + source_file + " " \
+                            + " ".join(dependencies) + "\n\t" + self.cc + self.cflags + source_file \
+                            + " -o " + object_name + " -I" + " -I".join(include_paths) + '\n\n'
+                # Now that the objects exist, we can add the executable/lib itself.
+                final_targets[target.type][target_name] = target_name + ": " + " ".join(target.obj_files) + "\n\t" \
+                    + self.cc + target.pre_flags + self.lflags + " ".join(target.obj_files) + " -o " + target_name \
+                    + " " + target.post_flags + '\n\n'
+            # Now that we have all the targets, order them properly i.e. INTERMEDIATE, LIBRARY, EXECUTABLE.
+            for target_dict in final_targets:
+                for target_name, makefile_string in target_dict.items():
+                    makefile += makefile_string
             return makefile
 
         def process_clean_targets() -> str:
