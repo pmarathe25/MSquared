@@ -6,6 +6,12 @@ import os
 import re
 import glob
 
+# Prepends a string with a prefix only if the string does not already have that prefix.
+def _prepend(prefix: str, input_string: str) -> str:
+    if input_string[:len(prefix)] != prefix:
+        return prefix + input_string
+    return input_string
+
 def _ends_with(input_string: str, ending: str) -> bool:
     return input_string.strip()[-len(ending):] == ending
 

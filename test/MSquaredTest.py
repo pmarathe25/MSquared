@@ -18,6 +18,7 @@ class MSquaredTest(unittest.TestCase):
         self.make_gen.add_executable("test/test", "test/test.cpp", clean=True, libraries=["lib/libtest.so", "pthread"])
         # Add a custom target that will run the test executable.
         self.make_gen.add_custom_target("test", dependencies="test/test", command="test/test")
+        self.make_gen.add_custom_target("lib", dependencies="lib/libtest.so", phony=True)
         # Write the makefile
         self.make_gen.write("makefile")
         # DEBUG:

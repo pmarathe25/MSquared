@@ -1,4 +1,4 @@
-from msquared._utils import _str_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with
+from msquared._utils import _str_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with, _prepend
 from typing import Dict, List, Set, Union
 from datetime import datetime
 import os
@@ -101,11 +101,11 @@ class MGen(object):
         lib_flags: str = ""
         for lib in libraries:
             lib = lib.strip()
-            # For .so's, link normally. Otherwise, conditionall prepend with -l.
+            # For .so's, link normally. Otherwise, conditionally prepend with -l.
             if ".so" in lib:
                 obj_files.add(lib)
             else:
-                lib_flags += ("-l" if lib[0:2] != "-l" else "") + lib
+                lib_flags += _prepend("-l", lib)
         self.targets[exec_name] = Target(TargetType.EXECUTABLE, source_files, obj_files=obj_files, post_flags=lib_flags)
 
     def add_library(self, lib_name: str, source_files: List[str], clean: bool = False) -> None:
