@@ -63,6 +63,6 @@ def _expand_glob_list(glob_list: List[str]):
     # Expand any globs within the headers. Also get absolute paths.
     expanded_glob_list: List[str] = []
     for glob_expr in glob_list:
-        expanded_glob = [os.path.abspath(item) for item in glob.glob(glob_expr)]
+        expanded_glob = [os.path.abspath(item) for item in glob.glob(glob_expr, recursive=True)]
         expanded_glob_list.extend(expanded_glob if expanded_glob else [glob_expr])
     return expanded_glob_list

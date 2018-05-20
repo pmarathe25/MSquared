@@ -3,7 +3,6 @@ from msquared.Target import *
 from typing import Dict, List, Set, Union
 from datetime import datetime
 from stat import S_IWRITE, S_IREAD, S_IRGRP, S_IROTH
-import glob
 import os
 
 class MGen(object):
@@ -140,10 +139,10 @@ class MGen(object):
                     object_name = os.path.abspath(object_name)
                     target.obj_files.add(object_name)
                     self.temporary_files.append(object_name)
-                    # And then figure out #include dependencies.
-                    dependencies = self._recursive_find_dependencies(source_file)
-                    include_paths = set([os.path.dirname(dep) for dep in dependencies])
                     if object_name not in final_targets[TargetType.INTERMEDIATE]:
+                        # And then figure out #include dependencies.
+                        dependencies = self._recursive_find_dependencies(source_file)
+                        include_paths = set([os.path.dirname(dep) for dep in dependencies])
                         # No need for duplicate intermediate objects. Make sure headers are visible with -I!
                         final_targets[TargetType.INTERMEDIATE][object_name] = object_name + ": " + source_file + " " \
                             + " ".join(dependencies) + "\n\t" + self.cc + self.cflags + source_file \
@@ -164,7 +163,7 @@ class MGen(object):
             self.temporary_files = _expand_glob_list(self.temporary_files)
             # Use root privilege if any of the temporary_files cannot be written to.
             sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in self.temporary_files]) else ""
-            return "clean:\n\t" + sudo + "rm -rf " + " ".join(self.temporary_files) + '\n\n'
+            return "clean:\n\t" + sudo + "rm -rf " + " ".join(set(self.temporary_files)) + '\n\n'
 
         def process_custom_targets() -> str:
             makefile: str = ""
