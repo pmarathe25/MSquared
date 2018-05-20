@@ -1,9 +1,10 @@
-from msquared._utils import _str_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with, _prepend
+from msquared._utils import _convert_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with, _prepend
 from typing import Dict, List, Set, Union
 from datetime import datetime
-import os
 from stat import S_IWRITE, S_IREAD, S_IRGRP, S_IROTH
 from enum import IntEnum
+import glob
+import os
 
 class TargetType(IntEnum):
     INTERMEDIATE = 0
@@ -20,7 +21,7 @@ class Target(object):
 
 class MGen(object):
     def __init__(self, project_dirs: List[str] = [], build_dir: str = "build"):
-        project_dirs = _str_to_list(project_dirs)
+        project_dirs = _convert_to_list(project_dirs)
         # Project options
         self._project_dirs: List[str] = project_dirs
         # This is populated just before generation.
@@ -94,8 +95,8 @@ class MGen(object):
     def add_executable(self, exec_name: str, source_files: List[str], clean: bool = False, libraries: List[str] = []) -> None:
         if clean:
             self.add_clean_files(exec_name)
-        libraries: List[str] = _str_to_list(libraries)
-        source_files: List[str] = _str_to_list(source_files)
+        libraries: List[str] = _convert_to_list(libraries)
+        source_files: List[str] = _convert_to_list(source_files)
 
         obj_files: Set[str] = set()
         lib_flags: str = ""
@@ -112,19 +113,35 @@ class MGen(object):
         pre_flags = "-shared " if _ends_with(lib_name, ".so") else ""
         if clean:
             self.add_clean_files(lib_name)
-        source_files = _str_to_list(source_files)
+        source_files = _convert_to_list(source_files)
         self.targets[lib_name] = Target(TargetType.LIBRARY, source_files, pre_flags=pre_flags)
 
-    def add_custom_target(self, target_name: str, dependencies: List[str] = [], command: List[str] = [], phony: bool = True) -> None:
+    def add_installation(self, headers: List[str], install_file: str, install_target: str = "install", uninstall_target: str = "uninstall", root_privilege: bool = False):
+        headers = _convert_to_list(headers)
+        sudo = "sudo " if root_privilege else ""
+        # Expand any globs within the headers. Also get absolute paths.
+        expanded_headers: List[str] = []
+        for header_glob in headers:
+            expanded_headers.extend([os.path.abspath(item) for item in glob.glob(header_glob)])
+        # Make sure the install location exists.
+        install_dir = os.path.dirname(install_file)
+        # Prefix with sudo if necessary.
+        install_commands = [sudo + "mkdir -p " + install_dir, sudo + 'printf \'#include "' + '"\\n#include "'.join(expanded_headers) + '"\' > ' + install_file]
+        uninstall_commands = [sudo + "rm -rf " + install_file, sudo + "rmdir " + install_dir]
+        install_commands = [sudo + command for command in install_commands]
+        self.add_custom_target(install_target, commands=install_commands, phony=True)
+        self.add_custom_target(uninstall_target, commands=uninstall_commands, phony=True)
+
+    def add_custom_target(self, target_name: str, commands: List[str] = [], phony: bool = True, dependencies: List[str] = []) -> None:
         if phony:
             self.phony_targets.append(target_name)
-        command = _str_to_list(command)
-        dependencies = _str_to_list(dependencies)
+        commands = _convert_to_list(commands)
+        dependencies = _convert_to_list(dependencies)
         self.custom_targets[target_name] = target_name + ": " + " ".join(dependencies) \
-            + "\n\t" + "\n\t".join(command) + "\n\n"
+            + "\n\t" + "\n\t".join(commands) + "\n\n"
 
     def add_clean_files(self, files: List[str] = []) -> None:
-        files = _str_to_list(files)
+        files = _convert_to_list(files)
         self.temporary_files.extend(files)
 
     def generate(self) -> str:

@@ -15,10 +15,10 @@ def _prepend(prefix: str, input_string: str) -> str:
 def _ends_with(input_string: str, ending: str) -> bool:
     return input_string.strip()[-len(ending):] == ending
 
-def _str_to_list(string_param: str) -> List[str]:
-    if isinstance(string_param, str):
-        return [string_param]
-    return string_param
+def _convert_to_list(obj) -> List:
+    if not isinstance(obj, list):
+        return [obj]
+    return obj
 
 # Returns a set all files in the provided paths.
 def _locate_files_in_paths(paths: List[str]) -> List[str]:
