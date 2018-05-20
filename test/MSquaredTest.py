@@ -20,7 +20,7 @@ class MSquaredTest(unittest.TestCase):
         self.make_gen.add_custom_target("test", commands="test/test", dependencies="test/test")
         self.make_gen.add_custom_target("lib", phony=True, dependencies="lib/libtest.so")
         # Add a target to install headers.
-        self.make_gen.add_installation(headers="include/*.hpp", install_file="/usr/local/include/MSquaredTest/msquared.hpp")
+        m2.add_installation(self.make_gen, headers="include/*.hpp", install_file="/usr/local/include/MSquaredTest/msquared.hpp")
         # Write the makefile
         self.make_gen.write("makefile")
         # DEBUG:

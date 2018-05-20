@@ -1,23 +1,10 @@
-from msquared._utils import _convert_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with, _prepend
+from msquared._utils import _convert_to_list, _locate_files_in_paths, _find_included_files, _find_file_in_list, _prompt_user_disambiguate_dependency, _ends_with, _prepend, _expand_glob_list
+from msquared.Target import *
 from typing import Dict, List, Set, Union
 from datetime import datetime
 from stat import S_IWRITE, S_IREAD, S_IRGRP, S_IROTH
-from enum import IntEnum
 import glob
 import os
-
-class TargetType(IntEnum):
-    INTERMEDIATE = 0
-    LIBRARY = 1
-    EXECUTABLE = 2
-
-class Target(object):
-    def __init__(self, type: TargetType, sources: List[str], obj_files: Set[str] = set(), pre_flags: str = "", post_flags: str = ""):
-        self.type: TargetType = type
-        self.sources: List[str] = sources
-        self.pre_flags: str = pre_flags
-        self.post_flags: str = post_flags
-        self.obj_files: Set[str] = obj_files
 
 class MGen(object):
     def __init__(self, project_dirs: List[str] = [], build_dir: str = "build"):
@@ -26,9 +13,9 @@ class MGen(object):
         self._project_dirs: List[str] = project_dirs
         # This is populated just before generation.
         self._project_files: List[str] = []
-        # Temporary storage - create the directory during generation if it does not exist.
+        # Temporary storage - create the directory during makefile generation if it does not exist.
         self.build_dir: str = build_dir
-        self.temporary_files: List[str] = [build_dir + "/*"]
+        self.temporary_files: List[str] = []
         # Custom Targets map a target directly to a makefile string.
         self.custom_targets: Dict[str, str] = {}
         self.phony_targets: List[str] = ["clean"]
@@ -116,22 +103,6 @@ class MGen(object):
         source_files = _convert_to_list(source_files)
         self.targets[lib_name] = Target(TargetType.LIBRARY, source_files, pre_flags=pre_flags)
 
-    def add_installation(self, headers: List[str], install_file: str, install_target: str = "install", uninstall_target: str = "uninstall", root_privilege: bool = False):
-        headers = _convert_to_list(headers)
-        sudo = "sudo " if root_privilege else ""
-        # Expand any globs within the headers. Also get absolute paths.
-        expanded_headers: List[str] = []
-        for header_glob in headers:
-            expanded_headers.extend([os.path.abspath(item) for item in glob.glob(header_glob)])
-        # Make sure the install location exists.
-        install_dir = os.path.dirname(install_file)
-        # Prefix with sudo if necessary.
-        install_commands = [sudo + "mkdir -p " + install_dir, sudo + 'printf \'#include "' + '"\\n#include "'.join(expanded_headers) + '"\' > ' + install_file]
-        uninstall_commands = [sudo + "rm -rf " + install_file, sudo + "rmdir " + install_dir]
-        install_commands = [sudo + command for command in install_commands]
-        self.add_custom_target(install_target, commands=install_commands, phony=True)
-        self.add_custom_target(uninstall_target, commands=uninstall_commands, phony=True)
-
     def add_custom_target(self, target_name: str, commands: List[str] = [], phony: bool = True, dependencies: List[str] = []) -> None:
         if phony:
             self.phony_targets.append(target_name)
@@ -140,8 +111,10 @@ class MGen(object):
         self.custom_targets[target_name] = target_name + ": " + " ".join(dependencies) \
             + "\n\t" + "\n\t".join(commands) + "\n\n"
 
+    # Support globs.
     def add_clean_files(self, files: List[str] = []) -> None:
         files = _convert_to_list(files)
+        files = _expand_glob_list(files)
         self.temporary_files.extend(files)
 
     def generate(self) -> str:
@@ -159,12 +132,14 @@ class MGen(object):
             makefile: str = ""
             # Keep a mapping of what the final targets look like. In the order INTERMEDIATE, LIBRARY, EXECUTABLE.
             final_targets: List[Dict[str, str]] = [{}, {}, {}]
+            # target here refers to an object of the Target class.
             for target_name, target in self.targets.items():
                 # Need to create an intermediate .o target for each source file.
                 for source_file in target.sources:
                     # Generate the corresponding object file by replacing any extension with '.o'.
                     object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
                     target.obj_files.add(object_name)
+                    self.temporary_files.append(object_name)
                     # And then figure out #include dependencies.
                     dependencies = self._recursive_find_dependencies(source_file)
                     include_paths = set([os.path.dirname(dep) for dep in dependencies])
@@ -185,7 +160,9 @@ class MGen(object):
 
         def process_clean_targets() -> str:
             makefile: str = ""
-            return "clean:\n\trm -rf " + " ".join(self.temporary_files) + '\n\n'
+            # Use root privilege if any of the temporary_files cannot be written to.
+            sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in self.temporary_files]) else ""
+            return "clean:\n\t" + sudo + "rm -rf " + " ".join(self.temporary_files) + '\n\n'
 
         def process_custom_targets() -> str:
             makefile: str = ""
