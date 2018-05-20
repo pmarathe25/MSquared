@@ -9,10 +9,12 @@ def add_installation(mgen, headers: List[str], install_file: str, install_target
     # Make sure the install location exists.
     install_dir = os.path.dirname(install_file)
     install_file = os.path.abspath(install_file)
+    temp_file = os.path.join(mgen.build_dir, os.path.basename(install_file))
     # And is writable. If not, use root privilege.
-    sudo = "sudo " if not os.access(install_dir, os.W_OK) else ""
+    sudo_install = "sudo " if not os.access(install_dir, os.W_OK) else ""
+    sudo_temp = "sudo " if not os.access(mgen.build_dir, os.W_OK) else ""
     # Prefix with sudo if necessary and create the folder/files necessary.
-    install_commands = [sudo + "mkdir -p " + install_dir, sudo + "touch " + install_file, sudo + 'printf \'#include "' + '"\\n#include "'.join(headers) + '"\' > ' + install_file]
-    uninstall_commands = [sudo + "rm -rf " + install_file, sudo + "rmdir " + install_dir]
+    install_commands = [sudo_install + "mkdir -p " + install_dir, sudo_temp + 'printf \'#include "' + '"\\n#include "'.join(headers) + '"\\n\' > ' + temp_file, sudo_install + "mv " + temp_file + " " + install_file]
+    uninstall_commands = [sudo_install + "rm -rf " + install_file, sudo_install + "rmdir " + install_dir]
     mgen.add_custom_target(install_target, commands=install_commands, phony=True)
     mgen.add_custom_target(uninstall_target, commands=uninstall_commands, phony=True)

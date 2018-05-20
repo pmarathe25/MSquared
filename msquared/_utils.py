@@ -59,8 +59,10 @@ def _prompt_user_disambiguate_dependency(dependency: str, matching_project_files
     return potential_matches[0]
 
 def _expand_glob_list(glob_list: List[str]):
+    glob_list = _convert_to_list(glob_list)
     # Expand any globs within the headers. Also get absolute paths.
-    expanded_glob: List[str] = []
+    expanded_glob_list: List[str] = []
     for glob_expr in glob_list:
-        expanded_glob.extend([os.path.abspath(item) for item in glob.glob(glob_expr)])
-    return expanded_glob
+        expanded_glob = [os.path.abspath(item) for item in glob.glob(glob_expr)]
+        expanded_glob_list.extend(expanded_glob if expanded_glob else [glob_expr])
+    return expanded_glob_list

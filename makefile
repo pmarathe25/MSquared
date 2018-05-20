@@ -10,4 +10,4 @@ test: install
 	cd test/ && ./MSquaredTest.py
 
 clean:
-	rm -r build/ dist/ msquared.egg-info/
+	sudo rm -r build/ dist/ msquared.egg-info/ test/makefile

@@ -26,7 +26,7 @@ class MGen(object):
         self.cc = "g++ "
         self.cflags: str = "-fPIC -c "
         self.lflags: str = ""
-        # Keep track of internal dependencies so we don't incur Disk I/O every time.
+        # Keep track of internal dependency lists so we don't incur Disk I/O every time.
         self._internal_dependencies: Dict[str, List[str]] = {}
 
     def __getitem__(self, index):
@@ -59,7 +59,7 @@ class MGen(object):
             dependency = _check_is_internal_dependency(dependency, source_file)
             if dependency and dependency not in all_dependencies:
                 # Otherwise, add this dependency and its children.
-                all_dependencies.add(dependency)
+                all_dependencies.add(os.path.abspath(dependency))
                 all_dependencies.update(self._recursive_find_dependencies(dependency))
         # Cache and return.
         self._internal_dependencies[source_file] = list(all_dependencies)
@@ -80,41 +80,40 @@ class MGen(object):
         self.lflags += flags + " "
 
     def add_executable(self, exec_name: str, source_files: List[str], clean: bool = False, libraries: List[str] = []) -> None:
+        exec_name = os.path.abspath(exec_name)
         if clean:
             self.add_clean_files(exec_name)
         libraries: List[str] = _convert_to_list(libraries)
-        source_files: List[str] = _convert_to_list(source_files)
-
-        obj_files: Set[str] = set()
+        shared_obj_files: Set[str] = set()
         lib_flags: str = ""
         for lib in libraries:
             lib = lib.strip()
             # For .so's, link normally. Otherwise, conditionally prepend with -l.
             if ".so" in lib:
-                obj_files.add(lib)
+                shared_obj_files.add(os.path.abspath(lib))
             else:
-                lib_flags += _prepend("-l", lib)
-        self.targets[exec_name] = Target(TargetType.EXECUTABLE, source_files, obj_files=obj_files, post_flags=lib_flags)
+                lib_flags += _prepend("-l", lib) + " "
+        # Not setting obj_files=set() breaks everything.
+        self.targets[exec_name] = Target(type=TargetType.EXECUTABLE, sources=source_files, obj_files=set(), shared_obj_files=shared_obj_files, post_flags=lib_flags)
 
     def add_library(self, lib_name: str, source_files: List[str], clean: bool = False) -> None:
+        lib_name = os.path.abspath(lib_name)
         pre_flags = "-shared " if _ends_with(lib_name, ".so") else ""
         if clean:
             self.add_clean_files(lib_name)
-        source_files = _convert_to_list(source_files)
         self.targets[lib_name] = Target(TargetType.LIBRARY, source_files, pre_flags=pre_flags)
 
     def add_custom_target(self, target_name: str, commands: List[str] = [], phony: bool = True, dependencies: List[str] = []) -> None:
         if phony:
             self.phony_targets.append(target_name)
         commands = _convert_to_list(commands)
-        dependencies = _convert_to_list(dependencies)
+        dependencies = [os.path.abspath(dep) for dep in _convert_to_list(dependencies)]
         self.custom_targets[target_name] = target_name + ": " + " ".join(dependencies) \
             + "\n\t" + "\n\t".join(commands) + "\n\n"
 
-    # Support globs.
+    # Supports globs (expanded during generation).
     def add_clean_files(self, files: List[str] = []) -> None:
         files = _convert_to_list(files)
-        files = _expand_glob_list(files)
         self.temporary_files.extend(files)
 
     def generate(self) -> str:
@@ -138,20 +137,22 @@ class MGen(object):
                 for source_file in target.sources:
                     # Generate the corresponding object file by replacing any extension with '.o'.
                     object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
+                    object_name = os.path.abspath(object_name)
                     target.obj_files.add(object_name)
                     self.temporary_files.append(object_name)
                     # And then figure out #include dependencies.
                     dependencies = self._recursive_find_dependencies(source_file)
                     include_paths = set([os.path.dirname(dep) for dep in dependencies])
-                    if object_name not in final_targets:
+                    if object_name not in final_targets[TargetType.INTERMEDIATE]:
                         # No need for duplicate intermediate objects. Make sure headers are visible with -I!
                         final_targets[TargetType.INTERMEDIATE][object_name] = object_name + ": " + source_file + " " \
                             + " ".join(dependencies) + "\n\t" + self.cc + self.cflags + source_file \
                             + " -o " + object_name + " -I" + " -I".join(include_paths) + '\n\n'
                 # Now that the objects exist, we can add the executable/lib itself.
-                final_targets[target.type][target_name] = target_name + ": " + " ".join(target.obj_files) + "\n\t" \
-                    + self.cc + target.pre_flags + self.lflags + " ".join(target.obj_files) + " -o " + target_name \
-                    + " " + target.post_flags + '\n\n'
+                final_targets[target.type][target_name] = target_name + ": " + " ".join(target.obj_files) + " " \
+                    + " ".join(target.shared_obj_files) + "\n\t" \
+                    + self.cc + target.pre_flags + self.lflags + " ".join(target.obj_files) + " " \
+                    + " ".join(target.shared_obj_files) + " -o " + target_name + " " + target.post_flags + '\n\n'
             # Now that we have all the targets, order them properly i.e. INTERMEDIATE, LIBRARY, EXECUTABLE.
             for target_dict in final_targets:
                 for target_name, makefile_string in target_dict.items():
@@ -160,6 +161,7 @@ class MGen(object):
 
         def process_clean_targets() -> str:
             makefile: str = ""
+            self.temporary_files = _expand_glob_list(self.temporary_files)
             # Use root privilege if any of the temporary_files cannot be written to.
             sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in self.temporary_files]) else ""
             return "clean:\n\t" + sudo + "rm -rf " + " ".join(self.temporary_files) + '\n\n'
@@ -190,7 +192,8 @@ class MGen(object):
     def write(self, filename: str) -> None:
         makefile = self.generate()
         # Unlock file.
-        os.chmod(filename, S_IWRITE|S_IRGRP|S_IROTH)
+        if os.path.isfile(filename):
+            os.chmod(filename, S_IWRITE|S_IRGRP|S_IROTH)
         with open(filename, "w") as outf:
             # Write to output file.
             outf.write(makefile)
