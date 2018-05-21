@@ -14,11 +14,11 @@ class MSquaredTest(unittest.TestCase):
         self.make_gen.add_cflags("-std=c++17")
         # Create a new target with the path to desired executable and use the source file(s) involved.
         # Should be removed during clean!
-        self.make_gen.add_library("lib/libtest.so", "src/*.cpp", clean=True)
-        self.make_gen.add_executable("test/test", source_files="test/test.cpp", clean=True, libraries="lib/libtest.so")
+        self.make_gen.register_library("lib/libtest.so", "src/*.cpp", clean=True)
+        self.make_gen.register_executable("test/test", source_files="test/test.cpp", clean=True, libraries="lib/libtest.so")
         # Add a custom target that will run the test executable.
-        self.make_gen.add_custom_target("test", commands="test/test", dependencies="test/test")
-        self.make_gen.add_custom_target("lib", phony=True, dependencies="lib/libtest.so")
+        self.make_gen.register_custom_target("test", commands="test/test", dependencies="test/test")
+        self.make_gen.register_custom_target("lib", phony=True, dependencies="lib/libtest.so")
         # Add a target to install headers.
         m2.add_installation(self.make_gen, headers="include/*.hpp", install_file="/usr/local/include/MSquaredTest/msquared.hpp")
         # Write the makefile

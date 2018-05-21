@@ -78,10 +78,10 @@ class MGen(object):
     def add_lflags(self, flags: str) -> None:
         self.lflags += flags + " "
 
-    def add_executable(self, exec_name: str, source_files: List[str], clean: bool = False, libraries: List[str] = []) -> None:
+    def register_executable(self, exec_name: str, source_files: List[str], clean: bool = False, libraries: List[str] = []) -> None:
         exec_name = os.path.abspath(exec_name)
         if clean:
-            self.add_clean_files(exec_name)
+            self.register_clean_files(exec_name)
         libraries: List[str] = _convert_to_list(libraries)
         shared_obj_files: Set[str] = set()
         lib_flags: str = ""
@@ -95,28 +95,28 @@ class MGen(object):
         # Not setting obj_files=set() breaks everything.
         self.targets[exec_name] = Target(type=TargetType.EXECUTABLE, sources=source_files, obj_files=set(), shared_obj_files=shared_obj_files, post_flags=lib_flags)
 
-    def add_library(self, lib_name: str, source_files: List[str], clean: bool = False) -> None:
+    def register_library(self, lib_name: str, source_files: List[str], clean: bool = False) -> None:
         lib_name = os.path.abspath(lib_name)
         pre_flags = "-shared " if _ends_with(lib_name, ".so") else ""
         if clean:
-            self.add_clean_files(lib_name)
+            self.register_clean_files(lib_name)
         self.targets[lib_name] = Target(TargetType.LIBRARY, source_files, obj_files=set(), pre_flags=pre_flags)
 
-    def add_custom_target(self, target_name: str, commands: List[str] = [], phony: bool = True, dependencies: List[str] = []) -> None:
+    def register_custom_target(self, target_name: str, commands: List[str] = [], phony: bool = True, dependencies: List[str] = []) -> None:
         if phony:
             self.phony_targets.append(target_name)
         commands = _convert_to_list(commands)
         dependencies = [os.path.abspath(dep) for dep in _convert_to_list(dependencies)]
         self.custom_targets[target_name] = target_name + ": " + " ".join(dependencies) \
-            + "\n\t" + "\n\t".join(commands) + "\n\n"
+            + "\n\t" + "\n\t".join(commands) + ("\n\n" if commands else "\n")
 
     # Supports globs (expanded during generation).
-    def add_clean_files(self, files: List[str] = []) -> None:
+    def register_clean_files(self, files: List[str] = []) -> None:
         files = _convert_to_list(files)
         self.temporary_files.extend(files)
 
     def generate(self) -> str:
-        def process_phony_targets() -> str:
+        def add_phony_targets() -> str:
             makefile: str = ""
             if self.phony_targets:
                 makefile += ".PHONY:"
@@ -126,7 +126,7 @@ class MGen(object):
                 makefile += "\n\n"
             return makefile
 
-        def process_real_targets() -> str:
+        def add_real_targets() -> str:
             makefile: str = ""
             # Keep a mapping of what the final targets look like. In the order INTERMEDIATE, LIBRARY, EXECUTABLE.
             final_targets: List[Dict[str, str]] = [{}, {}, {}]
@@ -159,14 +159,14 @@ class MGen(object):
                     makefile += makefile_string
             return makefile
 
-        def process_clean_targets() -> str:
+        def add_clean_targets() -> str:
             makefile: str = ""
             self.temporary_files = _expand_glob_list(self.temporary_files)
             # Use root privilege if any of the temporary_files cannot be written to.
             sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in self.temporary_files]) else ""
             return "clean:\n\t" + sudo + "rm -rf " + " ".join(set(self.temporary_files)) + '\n\n'
 
-        def process_custom_targets() -> str:
+        def add_custom_targets() -> str:
             makefile: str = ""
             for target, make_target in self.custom_targets.items():
                 makefile += make_target
@@ -179,13 +179,13 @@ class MGen(object):
         # Generate makefile.
         makefile: str = MGen._get_makefile_header()
         # Phony targets should be at the top of the makefile.
-        makefile += process_phony_targets()
+        makefile += add_phony_targets()
         # Handle libraries and executables.
-        makefile += process_real_targets()
+        makefile += add_real_targets()
         # Clean target
-        makefile += process_clean_targets()
+        makefile += add_clean_targets()
         # And finally custom targets.
-        makefile += process_custom_targets()
+        makefile += add_custom_targets()
         # Done
         return makefile
 

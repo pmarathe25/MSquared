@@ -16,5 +16,5 @@ def add_installation(mgen, headers: List[str], install_file: str, install_target
     # Prefix with sudo if necessary and create the folder/files necessary.
     install_commands = [sudo_install + "mkdir -p " + install_dir, sudo_temp + 'printf \'#include "' + '"\\n#include "'.join(headers) + '"\\n\' > ' + temp_file, sudo_install + "mv " + temp_file + " " + install_file]
     uninstall_commands = [sudo_install + "rm -rf " + install_file, sudo_install + "rmdir " + install_dir]
-    mgen.add_custom_target(install_target, commands=install_commands, phony=True)
-    mgen.add_custom_target(uninstall_target, commands=uninstall_commands, phony=True)
+    mgen.register_custom_target(install_target, commands=install_commands, phony=True)
+    mgen.register_custom_target(uninstall_target, commands=uninstall_commands, phony=True)
