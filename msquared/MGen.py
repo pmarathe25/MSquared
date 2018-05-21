@@ -115,6 +115,7 @@ class MGen(object):
         files = _convert_to_list(files)
         self.temporary_files.extend(files)
 
+    # Where the bulk of the work happens.
     def generate(self) -> str:
         def add_phony_targets() -> str:
             makefile: str = ""
@@ -164,7 +165,7 @@ class MGen(object):
             self.temporary_files = _expand_glob_list(self.temporary_files)
             # Use root privilege if any of the temporary_files cannot be written to.
             sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in self.temporary_files]) else ""
-            return "clean:\n\t" + sudo + "rm -rf " + " ".join(set(self.temporary_files)) + '\n\n'
+            return "clean:\n\t" + sudo + "rm -rf " + " ".join(self.temporary_files) + '\n\n'
 
         def add_custom_targets() -> str:
             makefile: str = ""
