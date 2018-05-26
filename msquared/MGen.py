@@ -67,16 +67,20 @@ class MGen(object):
     """API Functions"""
     def set_compiler(self, compiler: str) -> None:
         self.cc = compiler
+        return self
 
     def add_flags(self, flags: str) -> None:
         self.add_cflags(flags)
         self.add_lflags(flags)
+        return self
 
     def add_cflags(self, flags: str) -> None:
         self.cflags += flags + " "
+        return self
 
     def add_lflags(self, flags: str) -> None:
         self.lflags += flags + " "
+        return self
 
     def register_executable(self, exec_name: str, source_files: List[str], clean: bool = False, libraries: List[str] = []) -> None:
         exec_name = os.path.abspath(exec_name)
@@ -94,6 +98,7 @@ class MGen(object):
                 lib_flags += _prepend("-l", lib) + " "
         # Not setting obj_files=set() breaks everything.
         self.targets[exec_name] = Target(type=TargetType.EXECUTABLE, sources=source_files, obj_files=set(), shared_obj_files=shared_obj_files, post_flags=lib_flags)
+        return self
 
     def register_library(self, lib_name: str, source_files: List[str], clean: bool = False) -> None:
         lib_name = os.path.abspath(lib_name)
@@ -101,6 +106,7 @@ class MGen(object):
         if clean:
             self.register_clean_files(lib_name)
         self.targets[lib_name] = Target(TargetType.LIBRARY, source_files, obj_files=set(), pre_flags=pre_flags)
+        return self
 
     def register_custom_target(self, target_name: str, commands: List[str] = [], phony: bool = True, dependencies: List[str] = []) -> None:
         if phony:
@@ -109,26 +115,27 @@ class MGen(object):
         dependencies = [os.path.abspath(dep) for dep in _convert_to_list(dependencies)]
         self.custom_targets[target_name] = target_name + ": " + " ".join(dependencies) \
             + "\n\t" + "\n\t".join(commands) + ("\n\n" if commands else "\n")
+        return self
 
     # Supports globs (expanded during generation).
     def register_clean_files(self, files: List[str] = []) -> None:
         files = _convert_to_list(files)
         self.temporary_files.extend(files)
+        return self
 
     # Where the bulk of the work happens.
     def generate(self) -> str:
-        def add_phony_targets() -> str:
-            makefile: str = ""
+        def add_phony_targets(makefile: str) -> str:
             if self.phony_targets:
                 makefile += ".PHONY:"
                 # Declare targets as being phony
                 for phony_target in self.phony_targets:
                     makefile += " " + phony_target
                 makefile += "\n\n"
-            return makefile
+                return None
 
-        def add_real_targets() -> str:
-            makefile: str = ""
+        def add_real_targets(makefile: str) -> str:
+            object_files: List[str] = []
             # Keep a mapping of what the final targets look like. In the order INTERMEDIATE, LIBRARY, EXECUTABLE.
             final_targets: List[Dict[str, str]] = [{}, {}, {}]
             # target here refers to an object of the Target class.
@@ -139,7 +146,7 @@ class MGen(object):
                     object_name = self.build_dir + '/' + os.path.splitext(os.path.basename(source_file))[0] + ".o"
                     object_name = os.path.abspath(object_name)
                     target.obj_files.add(object_name)
-                    self.temporary_files.append(object_name)
+                    object_files.append(object_name)
                     # No need for duplicate intermediate objects.
                     if object_name not in final_targets[TargetType.INTERMEDIATE]:
                         # And then figure out #include dependencies.
@@ -150,45 +157,46 @@ class MGen(object):
                             + " ".join(dependencies) + "\n\t" + self.cc + self.cflags + source_file \
                             + " -o " + object_name + " -I" + " -I".join(include_paths) + '\n\n'
                 # Now that the objects exist, we can add the executable/lib itself.
-                final_targets[target.type][target_name] = target_name + ": " + " ".join(target.obj_files) + " " \
-                    + " ".join(target.shared_obj_files) + "\n\t" \
-                    + self.cc + target.pre_flags + self.lflags + " ".join(target.obj_files) + " " \
-                    + " ".join(target.shared_obj_files) + " -o " + target_name + " " + target.post_flags + '\n\n'
+                if target_name not in final_targets[target.type]:
+                    final_targets[target.type][target_name] = target_name + ": " + " ".join(target.obj_files) + " " \
+                        + " ".join(target.shared_obj_files) + "\n\t" \
+                        + self.cc + target.pre_flags + self.lflags + " ".join(target.obj_files) + " " \
+                        + " ".join(target.shared_obj_files) + " -o " + target_name + " " + target.post_flags + '\n\n'
             # Now that we have all the targets, order them properly i.e. INTERMEDIATE, LIBRARY, EXECUTABLE.
             for target_dict in final_targets:
                 for target_name, makefile_string in target_dict.items():
                     makefile += makefile_string
-            return makefile
+            return object_files
 
-        def add_clean_targets() -> str:
+        def add_clean_targets(makefile: str, temporary_files: List[str]) -> str:
             makefile: str = ""
-            self.temporary_files = _expand_glob_list(self.temporary_files)
+            temporary_files = _expand_glob_list(temporary_files)
             # Use root privilege if any of the temporary_files cannot be written to.
-            sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in self.temporary_files]) else ""
-            return "clean:\n\t" + sudo + "rm -rf " + " ".join(self.temporary_files) + '\n\n'
+            sudo = "sudo " if any([not os.access(os.path.dirname(temp_file), os.W_OK) for temp_file in temporary_files]) else ""
+            makefile += "clean:\n\t" + sudo + "rm -rf " + " ".join(temporary_files) + '\n\n'
+            return None
 
-        def add_custom_targets() -> str:
-            makefile: str = ""
+        def add_custom_targets(makefile: str) -> str:
             for target, make_target in self.custom_targets.items():
                 makefile += make_target
-            return makefile
+            return None
 
         # Find out what's in the project now.
         self._project_files = _locate_files_in_paths(self._project_dirs)
         # Create build directory if it doesn't exist.
         os.makedirs(self.build_dir, exist_ok=True)
         # Generate makefile.
-        makefile: str = MGen._get_makefile_header()
+        makefile: List[str] = [MGen._get_makefile_header()]
         # Phony targets should be at the top of the makefile.
-        makefile += add_phony_targets()
-        # Handle libraries and executables.
-        makefile += add_real_targets()
+        add_phony_targets(makefile)
+        # Handle libraries and executables. This will also update temporary_files.
+        object_files = add_real_targets(makefile)
         # Clean target
-        makefile += add_clean_targets()
+        add_clean_targets(makefile, object_files + self.temporary_files)
         # And finally custom targets.
-        makefile += add_custom_targets()
+        add_custom_targets(makefile)
         # Done
-        return makefile
+        return "".join(makefile)
 
     def write(self, filename: str) -> None:
         makefile = self.generate()
