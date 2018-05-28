@@ -9,7 +9,7 @@ def add_installation(mgen, headers: List[str], install_file: str, install_target
     # Make sure the install location exists.
     install_dir = os.path.dirname(install_file)
     install_file = os.path.abspath(install_file)
-    temp_file = os.path.join(mgen.build_dir, os.path.basename(install_file))
+    temp_file = os.path.join(mgen.build_dir, install_target + "_" + os.path.basename(install_file))
     # And is writable. If not, use root privilege.
     sudo_install = "sudo " if not os.access(install_dir, os.W_OK) else ""
     sudo_temp = "sudo " if not os.access(mgen.build_dir, os.W_OK) else ""
