@@ -4,8 +4,8 @@ import msquared as m2
 # Add this directory to the project.
 make_gen = m2.MGen("./")
 # # Make sure we compile/link with optimizations enabled and C++17.
-# make_gen.add_flags("-O3 -flto -march=native") \
-#     .add_cflags("-std=c++17")
+make_gen.flags += "-O3 -flto -march=native"
+make_gen.cflags += "-std=c++17"
 # # Create a new target with the path to desired executable and use the source file(s) involved.
 # # Should be removed during clean!
 # make_gen.register_library("lib/libtest.so", "src/*.cpp", clean=True) \
