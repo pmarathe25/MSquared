@@ -1,10 +1,10 @@
-from msquared._utils import _convert_to_list, _expand_glob_list
+from msquared import _utils as utils
 from msquared.MGen import MGen
 from typing import List
 import os
 
 def add_installation(mgen, headers: List[str], install_file: str, install_target: str = "install", uninstall_target: str = "uninstall"):
-    deps = list(_expand_glob_list(_convert_to_list(headers)))
+    deps = utils._expand_glob_list(utils._convert_to_iterable(headers))
     headers = MGen.StringList([os.path.abspath(header) for header in deps], prefix="\\n#include \"", suffix="\"")
     print(deps)
     # Make sure the install location exists.

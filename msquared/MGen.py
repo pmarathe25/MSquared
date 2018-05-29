@@ -36,7 +36,7 @@ class MGen(object):
             return self.__str__()
 
     def __init__(self, project_dirs: Union[str, List[str]] = [], build_root: str = "build/") -> None:
-        self.project_dirs = utils._convert_to_list(project_dirs)
+        self.project_dirs = utils._convert_to_iterable(project_dirs)
         self.build_root = build_root
         self.temp_files: Set[str] = set()
         self.phony: Set[str] = set()
@@ -77,7 +77,7 @@ class MGen(object):
             if clean:
                 self.temp_files.add(name)
         # Dependencies can be globs. _expand_glob_list automatically removes duplicates.
-        deps: List[str] = list(utils._expand_glob_list(utils._convert_to_list(deps)))
+        deps: List[str] = list(utils._expand_glob_list(utils._convert_to_iterable(deps)))
         objs: MGen.StringList[str] = MGen.StringList()
         sobjs: MGen.StringList[str] = MGen.StringList()
         for index in range(len(deps)):
@@ -96,7 +96,7 @@ class MGen(object):
             elif ftype == FileType.SHARED_OBJECT:
                 sobjs.append(deps[index])
         if cmds is not None:
-            cmds = utils._convert_to_list(cmds)
+            cmds = utils._convert_to_iterable(cmds)
         # Finally add the actual target.
         add_final_target(name, deps, cmds, objs, sobjs)
         # If an alias is desired, create it.

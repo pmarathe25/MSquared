@@ -16,8 +16,10 @@ def _suffix(input_string: str, suffix: str) -> str:
         return input_string
     return input_string + suffix
 
-def _convert_to_list(obj) -> List:
-    if not isinstance(obj, list):
+def _convert_to_iterable(obj) -> List:
+    def is_iterable(obj):
+        return not isinstance(obj, str) and (hasattr(obj, "__getitem__") or hasattr(obj, "__iter__"))
+    if not is_iterable(obj):
         return [obj]
     return obj
 
