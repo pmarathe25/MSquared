@@ -30,15 +30,19 @@ def _prefix_join(iterable, join_elem: str = ' ') -> str:
 def _find_included_files(filename: str):
     included_files: List[str] = []
     with open(filename, 'r') as file:
-        # Match includes of the form #include <.*> and #include ".*"
-        included_files.extend(re.findall('#include [<"]([^>"]*)[>"]', file.read()))
+        try:
+            # Match includes of the form #include <.*> and #include ".*"
+            included_files.extend(re.findall('#include [<"]([^>"]*)[>"]', file.read()))
+        except UnicodeDecodeError:
+            pass
     return included_files
 
 def _expand_glob_list(glob_list: List[str]):
     # No need for duplicates
     expanded_glob_set: Set[str] = set()
     for glob_expr in glob_list:
-        expanded_glob_set.update(glob.glob(glob_expr, recursive=True))
+        expanded_glob = glob.glob(glob_expr, recursive=True)
+        expanded_glob_set.update(expanded_glob if expanded_glob else [glob_expr])
     return expanded_glob_set
 
 def _disambiguate(items: List[str]):

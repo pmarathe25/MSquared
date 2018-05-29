@@ -14,7 +14,7 @@ class MGen(object):
     # Allows appending strings with += "" syntax.
     class StringList(list):
         def __init__(self, initializer: List = [], separator: str = " "):
-            list.__init__(initializer)
+            list.__init__(self, list(initializer))
             self.separator = separator
 
         def __iadd__(self, elem):
@@ -30,90 +30,107 @@ class MGen(object):
         def __str__(self):
             return utils._prefix_join(self, self.separator)
 
-    def __init__(self, project_dirs: Union[str, List[str]] = [], build_dir: str = "build/") -> None:
+    def __init__(self, project_dirs: Union[str, List[str]] = [], build_root: str = "build/") -> None:
         self.project_dirs = utils._convert_to_list(project_dirs)
-        self.build_dir = build_dir
-        self.build_files: Set[str] = set()
+        self.build_root = build_root
+        self.temp_files: Set[str] = set()
         self.phony: Set[str] = set()
         # Compiler settings
         self.cc = "g++"
         self.cflags = MGen.StringList(["-fPIC", "-c"])
-        self.lflags = MGen.StringList([" "])
-        self.flags = MGen.StringList([" "])
+        self.lflags = MGen.StringList()
+        self.flags = MGen.StringList()
         # Targets
         self.targets: Dict[str, Target] = {}
-        self.header_cache: Dict[str, Set[str]] = {}
+        # Tracks Header -> (Dependencies, Include Directories).
+        self.headers: Dict[str, Tuple[Set[str], Set[str]]] = {}
         # Add the default clean target
-        self.add_target("clean", command=f"rm -rf {self.build_dir}", phony=True)
+        # self.add_target("clean", command=f"rm -rf {self.build_root}", phony=True)
 
     def _object_name(self, filename: str) -> str:
-        return utils._suffix(self.build_dir, '/') + os.path.splitext(filename)[0] + ".o"
+        return utils._suffix(self.build_root, '/') + os.path.splitext(filename)[0] + ".o"
 
-    def add_target(self, name: str, deps: Union[str, List[str]] = [], command: str = "", phony: bool = False) -> None:
+    def add_target(self, name: str, deps: Union[str, List[str]] = [], command: str = None,
+        phony: bool = False, alias: str = None, execute: str = None) -> None:
         def add_object_target(name):
             obj = self._object_name(name)
+            self.temp_files.add(obj)
             if obj not in self.targets:
                 headers, include_paths = self._find_headers(name)
                 command = f"{self.cc} {name}{self.cflags}{self.flags} -o {obj}{utils._prefix_join(include_paths, ' -I')}"
                 self.targets[obj] = Target(obj, headers, command)
 
         def add_linked_target(name, deps, command, objs):
-            # Determine linker flags.
-            lflags = self.lflags + ("-shared" if file_type(name) == FileType.SHARED_OBJECT else "")
-            # Determine objects to link and the command to do so.
-            command = f"{self.cc}{objs}{lflags}{self.flags} -o {name}" if not command else command
+            # Only generate command if one is not provided.
+            if command is None:
+                lflags = self.lflags + ("-shared" if file_type(name) == FileType.SHARED_OBJECT else "")
+                command = f"{self.cc}{objs}{lflags}{self.flags} -o {name}"
             self.targets[name] = Target(name, deps, command)
 
         if phony:
             self.phony.add(name)
         else:
-            self.build_files.add(name)
+            self.temp_files.add(name)
         # Dependencies can be globs.
         deps: List[str] = list(utils._expand_glob_list(utils._convert_to_list(deps)))
         objs: List[str] = MGen.StringList()
-        # Change all source files to object files.
         for index in range(len(deps)):
             if file_type(deps[index]) == FileType.SOURCE:
-                # Create an object target for it.
+                # Change all source files to object files.
                 add_object_target(deps[index])
                 # Switch original name to obj name.
                 deps[index] = self._object_name(deps[index])
                 objs.append(deps[index])
+            elif file_type(deps[index]) == FileType.HEADER:
+                # If any headers are explicitly declared, find their deps and add to this target's deps.
+                # Find all headers, because we'll be updating them now.
+                self._find_headers(name)
+                [base.update(additions) for base, additions in zip(self.headers[name], self._find_headers(deps[index]))]
         # Finally add the actual target.
         add_linked_target(name, deps, command, objs)
+        # If an alias is desired, create it.
+        if alias:
+            self.add_target(alias, name, command="", phony=True)
+        if execute:
+            self.add_target(execute, name, command=name, phony=True)
 
     def find_in_project(self, filename: str):
         def impl():
-            found_files: List[str] = []
+            found_files: Set[str] = set()
             for project_dir in self.project_dirs:
-                found_files.extend(glob.glob(os.path.join(project_dir, '**', filename), recursive=True))
-            return found_files
+                found_files.update(glob.glob(os.path.join(project_dir, '**', filename), recursive=True))
+            return list(found_files)
         return impl()
 
     def _find_headers(self, header: str):
         # Check before any processing to allow for out-of-project headers.
-        if header in self.header_cache:
-            return self.header_cache[header]
+        if header in self.headers:
+            return self.headers[header]
         # Make sure we know which header we're looking at
-        header = utils._disambiguate(self.find_in_project(header))
-        if not header:
-            return (set(), set())
-        if header in self.header_cache:
-            return self.header_cache[header]
-        all_headers = set([header])
-        all_include_paths = set([os.path.dirname(header)])
-        for included_file in utils._find_included_files(header):
+        proj_header = utils._disambiguate(self.find_in_project(header))
+        if not proj_header or not os.path.isfile(proj_header):
+            # Cache it so we don't have to _disambiguate it again.
+            self.headers[header] = (set(), set())
+            return self.headers[header]
+        if proj_header in self.headers:
+            return self.headers[proj_header]
+        all_headers = set([proj_header])
+        all_include_paths = set([os.path.dirname(proj_header)])
+        for included_file in utils._find_included_files(proj_header):
             # Recurse through all dependencies to find headers and their respective include paths.
             headers, include_paths = self._find_headers(included_file)
             all_headers.update(headers)
             all_include_paths.update(include_paths)
-        # Add to self.header_cache before returning and find required include paths too.
-        self.header_cache[header] = (all_headers, all_include_paths)
-        return self.header_cache[header]
+        # Add to self.headers before returning and find required include paths too.
+        self.headers[proj_header] = (all_headers, all_include_paths)
+        return self.headers[proj_header]
 
     def generate(self):
 
-        print(f"HEADER CACHE: {self.header_cache}")
+        # DEBUG:
+        print("HEADER CACHE:")
+        for k, v in self.headers.items():
+            print(f"\t{k}: {v}")
 
         makefile_stack: List[str] = [_get_makefile_header()]
         # First push phony targets.
@@ -128,8 +145,14 @@ class MGen(object):
                 pushed_targets.add(name)
                 makefile_stack.append(str(self.targets[name]))
 
-        # Update clean target.
-        self.targets["clean"].command = f"rm -rf{utils._prefix_join(self.build_files)}"
+        # Update clean target. Recreate build directories because they could be destroyed.
+        build_files = set([build_file for build_file in self.temp_files if os.path.commonpath([self.build_root, build_file])])
+        # non_build_files = self.temp_files.interse
+        build_dirs = MGen.StringList(set([os.path.dirname(build_file) for build_file in build_files]), "\n\tmkdir -p ")
+        # Create build directories for the first time.
+        [os.makedirs(build_dir, exist_ok=True) for build_dir in build_dirs]
+        self.add_target("clean", command=f"rm -rf{utils._prefix_join(self.temp_files)}{build_dirs}", phony=True)
+        # self.add_target("purge", command=f"rm -rf{utils._prefix_join(self.temp_files)}{build_dirs}", phony=True)
         # Then push actual targets.
         for name in self.targets:
             try:
