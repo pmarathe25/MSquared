@@ -17,7 +17,7 @@ make_gen = m2.MGen("./")
 # m2.add_installation(make_gen, headers="include/*.hpp", install_file="/usr/local/include/MSquaredTest/msquared.hpp")
 # # Write the makefile
 # make_gen.write("makefile")
+make_gen.add_target("lib/libtest.so", deps=["src/*.cpp"])
 make_gen.add_target("test/test", deps=["lib/libtest.so", "test/test.cpp"])
-make_gen.add_target("lib/libtest.so", deps="src/*.cpp")
 # DEBUG:
 print(make_gen.generate())

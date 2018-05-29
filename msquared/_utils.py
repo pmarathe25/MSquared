@@ -2,20 +2,36 @@
 Utility functions.
 """
 from typing import List
+from enum import IntEnum
+import glob
 import os
 import re
-import glob
+
+class FileType(IntEnum):
+    SOURCE = 0
+    OBJECT = 1
+    SHARED_OBJECT = 2
+    EXECUTABLE = 3
+
+def _file_type(filename: str) -> FileType:
+    if os.path.splitext(filename)[1] == ".so":
+        return FileType.SHARED_OBJECT
+    elif os.path.splitext(filename)[1] == ".o":
+        return FileType.OBJECT
+    elif '.c' in os.path.splitext(filename)[1]:
+        return FileType.SOURCE
+    return FileType.EXECUTABLE
 
 # Prepends a string with a prefix only if the string does not already have that prefix.
 def _prefix(prefix: str, input_string: str) -> str:
-    if input_string[:len(prefix)] != prefix:
-        return prefix + input_string
-    return input_string
+    if input_string.starwith(prefix):
+        return input_string
+    return prefix + input_string
 
 def _suffix(input_string: str, suffix: str) -> str:
-    if input_string[-len(suffix):] != suffix:
-        return input_string + suffix
-    return input_string
+    if input_string.endswith(suffix):
+        return input_string
+    return input_string + suffix
 
 def _ends_with(input_string: str, ending: str) -> bool:
     return input_string.strip().endswith(ending)
@@ -24,6 +40,11 @@ def _convert_to_list(obj) -> List:
     if not isinstance(obj, list):
         return [obj]
     return obj
+
+def _prefix_join(iterable, join_elem: str = ' ') -> str:
+    if iterable:
+        return join_elem + join_elem.join(iterable)
+    return ""
 
 # Finds all #include's in a file.
 def _find_included_files(filename: str):

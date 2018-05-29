@@ -1,21 +1,12 @@
-from msquared._utils import _convert_to_list, _expand_glob_list
-from enum import IntEnum
+# from msquared._utils import _convert_to_list, _expand_glob_list
 from typing import List, Set
-
-class TargetType(IntEnum):
-    INTERMEDIATE = 0
-    LIBRARY = 1
-    EXECUTABLE = 2
+from msquared import _utils as utils
 
 class Target(object):
-    def __init__(self, type: TargetType, sources, obj_files=set(), shared_obj_files=set(), pre_flags: str = "", post_flags: str = ""):
-        self.type: TargetType = type
-        # Any globs in the dependent source files should be expanded.
-        self.sources: List[str] = _expand_glob_list(sources)
-        self.pre_flags: str = pre_flags
-        self.post_flags: str = post_flags
-        self.obj_files: Set[str] = obj_files
-        self.shared_obj_files: Set[str] = shared_obj_files
+    def __init__(self, name: str, deps: List[str], command: str):
+        self.name = name
+        self.deps = deps
+        self.command = command
 
     def __str__(self):
-        return "Type: " + str(self.type) + "\tSources: " + str(self.sources) + "\tObject Files: " + str(self.obj_files) + "\tPreFlags: " + str(self.pre_flags) + "\tPostFlags: " + str(self.post_flags)
+        return f"{self.name}:{utils._prefix_join(self.deps)}\n\t{self.command}\n"
