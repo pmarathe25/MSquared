@@ -8,7 +8,7 @@ class Target(object):
         self.name = name
         self.deps = deps
         # Don't create unnecessary whitespace.
-        self.command = utils._prefix_join(command, '\n\t') if ''.join(command).strip() else ""
+        self.command = utils._wrapper_join(command, '\n\t') if ''.join(command).strip() else ""
 
     def __str__(self):
-        return f"{self.name}:{utils._prefix_join(self.deps)}{self.command}\n"
+        return f"{self.name}:{utils._wrapper_join(self.deps)}{self.command}\n"

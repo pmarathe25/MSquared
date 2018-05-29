@@ -13,9 +13,10 @@ def _get_makefile_header() -> str:
 class MGen(object):
     # Allows appending strings with += "" syntax.
     class StringList(list):
-        def __init__(self, initializer: List = [], separator: str = " "):
+        def __init__(self, initializer: List = [], prefix: str = " ", suffix: str = ""):
             list.__init__(self, list(initializer))
-            self.separator = separator
+            self.prefix = prefix
+            self.suffix = suffix
 
         def __iadd__(self, elem):
             if isinstance(elem, str):
@@ -29,7 +30,7 @@ class MGen(object):
             return MGen.StringList(list.__add__(self, elem))
 
         def __str__(self):
-            return utils._prefix_join(self, self.separator)
+            return utils._wrapper_join(self, self.prefix, self.suffix)
 
         def __repr__(self):
             return self.__str__()
@@ -59,7 +60,7 @@ class MGen(object):
             self.temp_files.add(obj)
             if obj not in self.targets:
                 headers, include_paths = self._find_headers(name)
-                cmds = [f"{self.cc} {name}{self.cflags}{self.flags} -o {obj}{utils._prefix_join(include_paths, ' -I')}"]
+                cmds = [f"{self.cc} {name}{self.cflags}{self.flags} -o {obj}{utils._wrapper_join(include_paths, ' -I')}"]
                 self.targets[obj] = Target(obj, headers, cmds)
 
         def add_final_target(name, deps, cmds, objs, sobjs):
@@ -90,6 +91,7 @@ class MGen(object):
             elif ftype == FileType.HEADER:
                 # If any headers are explicitly declared, find their deps and add to this target's deps.
                 # Find all headers, because we'll be updating them now.
+                self._find_headers(name)
                 [base.update(additions) for base, additions in zip(self.headers[name], self._find_headers(deps[index]))]
             elif ftype == FileType.SHARED_OBJECT:
                 sobjs.append(deps[index])
@@ -164,15 +166,15 @@ class MGen(object):
         make_build_dirs = MGen.StringList(set([os.path.dirname(bfile) for bfile in build_files]), "\n\tmkdir -p ")
         # Create build directories for the first time.
         [os.makedirs(build_dir, exist_ok=True) for build_dir in make_build_dirs]
-        self.add_target("clean", cmds=f"rm -rf{utils._prefix_join(self.temp_files)}{make_build_dirs}", phony=True)
-        self.add_target("purge", cmds=f"rm -rf {self.build_root}{utils._prefix_join(non_build_files)} {make_build_dirs}", phony=True)
+        self.add_target("clean", cmds=f"rm -rf{utils._wrapper_join(self.temp_files)}{make_build_dirs}", phony=True)
+        self.add_target("purge", cmds=f"rm -rf {self.build_root}{utils._wrapper_join(non_build_files)} {make_build_dirs}", phony=True)
         # Then push actual targets.
         for name in self.targets:
             try:
                 push_target(name)
             except RecursionError:
                 print(f"WARNING: Cyclic dependency detected while processing {name}. Skipping.")
-        return f"{_get_makefile_header()}\n.PHONY:{utils._prefix_join(self.phony)}\n{makefile_stack}"
+        return f"{_get_makefile_header()}\n.PHONY:{utils._wrapper_join(self.phony)}\n{makefile_stack}"
 
     def write(self, filename: str) -> None:
         makefile = self.generate()

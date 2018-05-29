@@ -21,10 +21,11 @@ def _convert_to_list(obj) -> List:
         return [obj]
     return obj
 
-def _prefix_join(iterable, join_elem: str = ' ') -> str:
-    if iterable:
-        return join_elem + join_elem.join(iterable)
-    return ""
+def _wrapper_join(iterable, prefix: str = " ", suffix: str = "") -> str:
+    joined: str = ""
+    for elem in iterable:
+        joined += prefix + elem + suffix
+    return joined
 
 # Finds all #include's in a file.
 def _find_included_files(filename: str):
