@@ -20,15 +20,20 @@ class MGen(object):
         def __iadd__(self, elem):
             if isinstance(elem, str):
                 elem = elem.split()
-            self.extend(elem)
+            list.__iadd__(self, elem)
             return self
 
         def __add__(self, elem):
-            self.__iadd__(elem)
-            return self
+            if isinstance(elem, str):
+                elem = elem.split()
+            return MGen.StringList(list.__add__(self, elem))
 
         def __str__(self):
+            print(utils._prefix_join(self, self.separator))
             return utils._prefix_join(self, self.separator)
+
+        def __repr__(self):
+            return self.__str__()
 
     def __init__(self, project_dirs: Union[str, List[str]] = [], build_root: str = "build/") -> None:
         self.project_dirs = utils._convert_to_list(project_dirs)
@@ -60,34 +65,38 @@ class MGen(object):
                 command = f"{self.cc} {name}{self.cflags}{self.flags} -o {obj}{utils._prefix_join(include_paths, ' -I')}"
                 self.targets[obj] = Target(obj, headers, command)
 
-        def add_linked_target(name, deps, command, objs):
+        def add_final_target(name, deps, command, objs, sobjs):
             # Only generate command if one is not provided.
             if command is None:
                 lflags = self.lflags + ("-shared" if file_type(name) == FileType.SHARED_OBJECT else "")
-                command = f"{self.cc}{objs}{lflags}{self.flags} -o {name}"
+                command = f"{self.cc}{objs}{sobjs}{lflags}{self.flags} -o {name}"
             self.targets[name] = Target(name, deps, command)
 
         if phony:
             self.phony.add(name)
         else:
             self.temp_files.add(name)
-        # Dependencies can be globs.
+        # Dependencies can be globs. _expand_glob_list automatically removes duplicates.
         deps: List[str] = list(utils._expand_glob_list(utils._convert_to_list(deps)))
-        objs: List[str] = MGen.StringList()
+        objs: MGen.StringList[str] = MGen.StringList()
+        sobjs: MGen.StringList[str] = MGen.StringList()
         for index in range(len(deps)):
-            if file_type(deps[index]) == FileType.SOURCE:
+            ftype = file_type(deps[index])
+            if ftype == FileType.SOURCE:
                 # Change all source files to object files.
                 add_object_target(deps[index])
                 # Switch original name to obj name.
                 deps[index] = self._object_name(deps[index])
                 objs.append(deps[index])
-            elif file_type(deps[index]) == FileType.HEADER:
+            elif ftype == FileType.HEADER:
                 # If any headers are explicitly declared, find their deps and add to this target's deps.
                 # Find all headers, because we'll be updating them now.
                 self._find_headers(name)
                 [base.update(additions) for base, additions in zip(self.headers[name], self._find_headers(deps[index]))]
+            elif ftype == FileType.SHARED_OBJECT:
+                sobjs.append(deps[index])
         # Finally add the actual target.
-        add_linked_target(name, deps, command, objs)
+        add_final_target(name, deps, command, objs, sobjs)
         # If an alias is desired, create it.
         if alias:
             self.add_target(alias, name, command="", phony=True)
@@ -132,9 +141,8 @@ class MGen(object):
         for k, v in self.headers.items():
             print(f"\t{k}: {v}")
 
-        makefile_stack: List[str] = [_get_makefile_header()]
-        # First push phony targets.
-        makefile_stack.append(f".PHONY:{utils._prefix_join(self.phony)}\n")
+        makefile_stack = MGen.StringList([], '\n')
+        # Keep track of which targets are already pushed.
         pushed_targets: Set[str] = set()
 
         def push_target(name: str):
@@ -146,20 +154,25 @@ class MGen(object):
                 makefile_stack.append(str(self.targets[name]))
 
         # Update clean target. Recreate build directories because they could be destroyed.
-        build_files = set([build_file for build_file in self.temp_files if os.path.commonpath([self.build_root, build_file])])
-        # non_build_files = self.temp_files.interse
-        build_dirs = MGen.StringList(set([os.path.dirname(build_file) for build_file in build_files]), "\n\tmkdir -p ")
+        build_files: Set[str] = set()
+        non_build_files: Set[str] = set()
+        for temp_file in self.temp_files:
+            if os.path.commonpath([self.build_root, temp_file]):
+                build_files.add(temp_file)
+            else:
+                non_build_files.add(temp_file)
+        make_build_dirs = MGen.StringList(set([os.path.dirname(bfile) for bfile in build_files]), "\n\tmkdir -p ")
         # Create build directories for the first time.
-        [os.makedirs(build_dir, exist_ok=True) for build_dir in build_dirs]
-        self.add_target("clean", command=f"rm -rf{utils._prefix_join(self.temp_files)}{build_dirs}", phony=True)
-        # self.add_target("purge", command=f"rm -rf{utils._prefix_join(self.temp_files)}{build_dirs}", phony=True)
+        [os.makedirs(build_dir, exist_ok=True) for build_dir in make_build_dirs]
+        self.add_target("clean", command=f"rm -rf{utils._prefix_join(self.temp_files)}{make_build_dirs}", phony=True)
+        self.add_target("purge", command=f"rm -rf {self.build_root}{utils._prefix_join(non_build_files)} {make_build_dirs}", phony=True)
         # Then push actual targets.
         for name in self.targets:
             try:
                 push_target(name)
             except RecursionError:
-                print(f"WARNING: Cyclic dependency encountered while processing {name}. Skipping.")
-        return '\n'.join(makefile_stack)
+                print(f"WARNING: Cyclic dependency detected while processing {name}. Skipping.")
+        return f"{_get_makefile_header()}\n.PHONY:{utils._prefix_join(self.phony)}\n{makefile_stack}"
 
     def write(self, filename: str) -> None:
         makefile = self.generate()
