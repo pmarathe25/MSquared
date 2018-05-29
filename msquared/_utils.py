@@ -52,4 +52,5 @@ def _disambiguate(items: List[str]):
         return items[0]
     else:
         # TODO: Prompt user here
+        print(f"WARNING: Found multiple candidates: {items}. Automatically choosing first candidate.")
         return items[0]
