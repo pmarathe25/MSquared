@@ -4,6 +4,7 @@ Utility functions.
 from typing import List
 import glob
 import re
+import os
 
 # Prepends a string with a prefix only if the string does not already have that prefix.
 def _prefix(prefix: str, input_string: str) -> str:
@@ -35,7 +36,7 @@ def _find_included_files(filename: str):
     with open(filename, 'r') as file:
         try:
             # Match includes of the form #include <.*> and #include ".*"
-            included_files.extend(re.findall('#include [<"]([^>"]*)[>"]', file.read()))
+            included_files.extend(re.findall('(?:(?<!\/\/\s))#include [<"]([^>"]*)[>"]', file.read()))
         except UnicodeDecodeError:
             pass
     return included_files
@@ -48,7 +49,7 @@ def _expand_glob_list(glob_list: List[str]):
         expanded_glob_set.update(expanded_glob if expanded_glob else [glob_expr])
     return expanded_glob_set
 
-def _disambiguate(items: List[str]):
+def _disambiguate_files(items: List[str]):
     if not items:
         return None
     elif len(items) == 1:

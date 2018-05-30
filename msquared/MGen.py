@@ -72,10 +72,8 @@ class MGen(object):
 
         if phony:
             self.phony.add(name)
-        else:
-            self._find_headers(name)
-            if clean:
-                self.temp_files.add(name)
+        elif clean:
+            self.temp_files.add(name)
         # Dependencies can be globs. _expand_glob_list automatically removes duplicates.
         deps: List[str] = list(utils._expand_glob_list(utils._convert_to_iterable(deps)))
         objs: MGen.StringList[str] = MGen.StringList()
@@ -88,11 +86,6 @@ class MGen(object):
                 # Switch original name to obj name.
                 deps[index] = self._object_name(deps[index])
                 objs.append(deps[index])
-            elif ftype == FileType.HEADER:
-                # If any headers are explicitly declared, find their deps and add to this target's deps.
-                # Find all headers, because we'll be updating them now.
-                self._find_headers(name)
-                [base.update(additions) for base, additions in zip(self.headers[name], self._find_headers(deps[index]))]
             elif ftype == FileType.SHARED_OBJECT:
                 sobjs.append(deps[index])
         if cmds is not None:
@@ -105,12 +98,18 @@ class MGen(object):
         if execute:
             self.add_target(execute, name, cmds=name, phony=True)
 
+    # Finds the shortest path.
+    def _find_shortest_path(self, filename: str):
+        abspath = os.path.abspath(filename)
+        relpath = os.path.relpath(filename)
+        return relpath if os.path.isfile(relpath) and len(relpath) < len(abspath) else abspath
+
     def find_in_project(self, filename: str):
         def impl():
             found_files: Set[str] = set()
             for project_dir in self.project_dirs:
                 found_files.update(glob.glob(os.path.join(project_dir, '**', filename), recursive=True))
-            return list(found_files)
+            return list(set([self._find_shortest_path(filename) for filename in found_files]))
         return impl()
 
     def _find_headers(self, header: str):
@@ -118,9 +117,9 @@ class MGen(object):
         if header in self.headers:
             return self.headers[header]
         # Make sure we know which header we're looking at
-        proj_header = utils._disambiguate(self.find_in_project(header))
+        proj_header = utils._disambiguate_files(self.find_in_project(header))
         if not proj_header or not os.path.isfile(proj_header):
-            # Cache it so we don't have to _disambiguate it again.
+            # Cache it so we don't have to disambiguate it again.
             self.headers[header] = (set(), set())
             return self.headers[header]
         if proj_header in self.headers:
@@ -137,12 +136,6 @@ class MGen(object):
         return self.headers[proj_header]
 
     def generate(self):
-
-        # DEBUG:
-        print("HEADER CACHE:")
-        for k, v in self.headers.items():
-            print(f"\t{k}: {v}")
-
         makefile_stack = MGen.StringList([], '\n')
         # Keep track of which targets are already pushed.
         pushed_targets: Set[str] = set()

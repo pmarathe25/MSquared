@@ -5,8 +5,7 @@ import os
 
 def add_installation(mgen, headers: List[str], install_file: str, install_target: str = "install", uninstall_target: str = "uninstall"):
     deps = utils._expand_glob_list(utils._convert_to_iterable(headers))
-    headers = MGen.StringList([os.path.abspath(header) for header in deps], prefix="\\n#include \"", suffix="\"")
-    print(deps)
+    headers = MGen.StringList([os.path.abspath(header) for header in deps], prefix="#include \"", suffix="\"\\n")
     # Make sure the install location exists.
     install_dir = os.path.dirname(install_file)
     install_file = os.path.abspath(install_file)
