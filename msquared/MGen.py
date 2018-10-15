@@ -56,7 +56,7 @@ def wrap(prefix, objs, suffix):
     return [prefix + obj + suffix for obj in objs]
 
 class MGen(object):
-    # TODO: Generalize for difference compilers
+    # TODO: Generalize for different compilers
     DEFAULT_COMPILER = "g++"
     DEFAULT_CFLAGS = set(["--std=c++17", "-O3", "-flto", "-march=native", "-c"])
     DEFAULT_EXEC_LFLAGS = set(["--std=c++17", "-O3", "-flto", "-march=native"])
@@ -95,13 +95,16 @@ class MGen(object):
         self.link_dirs: Set[str] = utils.convert_to_set(link_dirs)
         # Keep track of user-defined targets.
         self.targets: Set[Target] = set()
+        # Keep track of all the makefile targets as well.
+        self.makefile_targets: Set[MakefileTarget] = set()
+
         # Also keep track of which libraries are internal to the project and their corresponding targets.
         self.libraries: Dict[str, Target] = {}
 
     def _generate_target(self, name: str, sources: Set[str], libraries: Set[str], cflags: Set[str], include_dirs: Set[str], lflags: Set[str], link_dirs: Set[str], compiler) -> Target:
         # Add global options to each executable. This makes the Targets returned to the user complete.
         # TODO: Make output directory configurable per target?
-        name = os.path.join(self.build_dir, name)
+        path = os.path.join(self.build_dir, name)
         sources = utils.locate_paths(sources, self.project_source_dirs, self.logger, FileNotFoundError)
         libraries = utils.convert_to_set(libraries)
         cflags = utils.convert_to_set(cflags) | self.cflags
@@ -109,7 +112,7 @@ class MGen(object):
         lflags = utils.convert_to_set(lflags)
         link_dirs = utils.convert_to_set(link_dirs) | self.link_dirs
         compiler = compiler if compiler else self.compiler
-        target = Target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler)
+        target = Target(name, path, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler)
         self.targets.add(target)
         return target
 
@@ -147,7 +150,7 @@ class MGen(object):
                 # uid is everything about the target that makes it unique i.e. compiler + flags.
                 # Some of the flags need to be sanitized first though.
                 san_cflags = [flag.replace("=", "eq") for flag in target.cflags]
-                uid = f"{target.compiler}{utils.prefix_join(san_cflags, '')}"
+                uid = f"{target.compiler}{''.join(san_cflags)}"
                 filename = f"{os.path.basename(os.path.splitext(source)[0])}.{uid}.o"
                 return outpath, filename
 
@@ -161,7 +164,7 @@ class MGen(object):
             headers = self._locate_headers(source, header_cache)
             self.logger.debug(f"For {source}, found headers: {headers}")
             # Add compilation command.
-            commands.append(f"{target.compiler} {source} -o {path} {utils.prefix_join(target.include_dirs, '-I')} {utils.prefix_join(target.cflags)}")
+            commands.append(f"{target.compiler} {source} -o {path} {utils.prefix_join(target.include_dirs, '-I')} {' '.join(target.cflags)}")
             return MakefileTarget(name=path, dependencies=headers, commands=commands)
 
         # At this point, each source is guaranteed to be an absolute path.
@@ -180,15 +183,17 @@ class MGen(object):
         libs = set()
         for lib in target.libraries:
             if lib in self.libraries:
-                libname = self.libraries[lib].name
+                libname = self.libraries[lib].path
                 libs.add(libname)
                 deps.add(libname)
             else:
                 libs.add(utils.prefix("-l", lib))
 
-        command = f"{target.compiler} {utils.prefix_join(objects)} -o {target.name} {utils.prefix_join(target.link_dirs, '-L')} {utils.prefix_join(libs)} {utils.prefix_join(target.lflags)}"
+        command = f"{target.compiler} {' '.join(objects)} -o {target.path} {utils.prefix_join(target.link_dirs, '-L')} {' '.join(libs)} {' '.join(target.lflags)}"
+        # Generate a phony target as a shorthand representation for this target.
+        makefile_targets.add(MakefileTarget(name=target.name, dependencies=target.path, phony=True))
         # Finally, generate a target for the final linked executable/library.
-        makefile_targets.add(MakefileTarget(name=target.name, dependencies=deps, commands=command))
+        makefile_targets.add(MakefileTarget(name=target.path, dependencies=deps, commands=command))
         return makefile_targets
 
     """
@@ -243,21 +248,26 @@ class MGen(object):
         """
         # Keep a cache of header -> dependencies.
         header_cache: Dict[str, Set[str]] = {}
-        # Keep track of all the makefile targets as well.
-        makefile_targets: Set[MakefileTarget] = set()
         all_deps = []
         # Walk over all the targets. For each one, we add an intermediate target for each source file.
         for target in self.targets:
-            makefile_targets |= self._generate_intermediate_targets(target, header_cache)
-            all_deps.append(target.name)
+            self.makefile_targets |= self._generate_intermediate_targets(target, header_cache)
+            all_deps.append(target.path)
 
-        # Create an all target and add it to the top of the Makefile targets.
-        all_target = MakefileTarget(name="all", dependencies=all_deps)
-        makefile_targets = [all_target] + list(makefile_targets)
+        # Add a clean target.
+        self.makefile_targets.add(MakefileTarget(name="clean", commands=f"rm -rf {self.build_dir}", phony=True))
+
+        # TODO: Add a help target.
+
+        # Create an all target as the first target.
+        all_target = MakefileTarget(name="all", dependencies=all_deps, phony=True)
+        final_targets = [all_target] + list(self.makefile_targets)
 
         # Create the final makefile.
         target_sep = "\n\n"
-        Makefile = f"{MGen._get_makefile_header()}{utils.prefix_join(makefile_targets, target_sep)}"
+        Makefile = f"{MGen._get_makefile_header()}{utils.prefix_join(final_targets, target_sep)}"
+        # Remove all MakefileTargets
+        self.makefile_targets.clear()
         return Makefile
 
     def write(self, filename = "Makefile") -> None:

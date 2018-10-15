@@ -5,7 +5,7 @@ from msquared import utils
 # It has cflags and include_dirs, which are propagated to constituent objects
 # (based on deps), as well as lflags and link_dirs which it uses.
 class Target(object):
-    def __init__(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=""):
+    def __init__(self, name: str, path: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=""):
         """
         Represents an executable or library.
 
@@ -19,6 +19,7 @@ class Target(object):
             link_dirs (Set[str]): Link directories for this target.
         """
         self.name = name
+        self.path = path
         self.sources = utils.convert_to_set(sources)
         self.libraries = utils.convert_to_set(libraries)
         self.cflags = utils.convert_to_set(cflags)
@@ -28,16 +29,18 @@ class Target(object):
         self.compiler = compiler
 
 # Represents a target in a makefile. This consists of a name, dependencies, and commands.
-# TODO: Also add options for PHONY here?
 class MakefileTarget(object):
-    def __init__(self, name: str, dependencies = set(), commands = list()):
+    def __init__(self, name: str, dependencies = set(), commands = list(), phony = False):
         self.name = name
         self.dependencies = utils.convert_to_set(dependencies)
         self.commands = utils.convert_to_list(commands)
+        self.phony = phony
 
     def __str__(self):
         cmd_sep = "\n\t"
-        return f"{self.name}:{utils.prefix_join(self.dependencies)}{utils.prefix_join(self.commands, cmd_sep)}"
+        phony_line = f".PHONY: {self.name}"
+        target_line = f"{self.name}:{utils.prefix_join(self.dependencies)}{utils.prefix_join(self.commands, cmd_sep)}"
+        return f"{phony_line}\n{target_line}" if self.phony else f"{target_line}"
 
     def __repr__(self):
         return self.__str__()
