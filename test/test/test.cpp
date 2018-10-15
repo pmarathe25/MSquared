@@ -1,7 +1,6 @@
 // External - build system shouldn't care about these.
 #include <iostream>
 // Internal dependencies
-#include <MsquaredTest>
 #include "fibonacci.hpp"
 #include "factorial.hpp"
 
