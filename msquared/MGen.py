@@ -1,6 +1,7 @@
 from msquared import utils
 from msquared.Logger import Logger
 from msquared.Target import Target, MakefileTarget
+from msquared.Compilers import *
 from typing import Dict, List, Set, Union
 from datetime import datetime
 import inspect
@@ -10,11 +11,6 @@ import os
 """
 API Functions
 """
-class LibraryType(enum.IntEnum):
-    SHARED = 0
-    # TODO: Support archiving
-    ARCHIVE = 1
-
 def add_prefix(prefix, objs):
     """
     Adds a prefix to each element of a list.
@@ -55,12 +51,35 @@ def wrap(prefix, objs, suffix):
     """
     return [prefix + obj + suffix for obj in objs]
 
+class HeaderManager(object):
+    def __init__(self, header_dirs, logger):
+        self.header_dirs: Set[str] = header_dirs
+        self.logger: Logger = logger
+        self.header_cache: Dict[str, Set[str]] = {}
+
+    # Given a file, recursively locates all headers in that file.
+    def locate_headers(self, filename):
+        # First check the cache, so we don't recurse unnecessarily.
+        if filename in self.header_cache:
+            self.logger.debug(f"Found {filename} in header cache. Using headers: {self.header_cache[filename]}")
+            return self.header_cache[filename]
+        # Find the headers in this file.
+        headers = utils.find_included_files(filename)
+        headers, notfound = utils.locate_paths(headers, self.header_dirs, self.logger)
+        if notfound:
+            self.logger.warning(f"For {filename}, assuming {notfound} are external headers. If this is incorrect, please set project_include_dirs correctly (currently set to {self.header_dirs}).")
+        # Next find the headers contained within those headers.
+        all_headers = set() | headers
+        for header in headers:
+            self.logger.debug(f"For {filename}, recursing through {header}")
+            all_headers |= self.locate_headers(header)
+        # Cache
+        self.logger.debug(f"Adding entry to header cache: {filename}: {all_headers}")
+        self.header_cache[filename] = all_headers
+        return all_headers
+
 class MGen(object):
     # TODO: Generalize for different compilers
-    DEFAULT_COMPILER = "g++"
-    DEFAULT_CFLAGS = set(["--std=c++17", "-O3", "-flto", "-march=native", "-c"])
-    DEFAULT_EXEC_LFLAGS = set(["--std=c++17", "-O3", "-flto", "-march=native"])
-    DEFAULT_LIB_LFLAGS = set(["--std=c++17", "-O3", "-flto", "-march=native", "-shared"])
     """
     Internal Functions
     """
@@ -69,132 +88,71 @@ class MGen(object):
 
     # The key difference between project_include_dirs and include_dirs is that include_dirs headers are still treated as
     # being external to the project i.e. they are not scanned recursively for dependencies.
-    def __init__(self, project_source_dirs=set(["."]), project_include_dirs=set(), build_dir="build", compiler=DEFAULT_COMPILER, cflags=DEFAULT_CFLAGS, include_dirs=set(), exec_lflags=DEFAULT_EXEC_LFLAGS, lib_lflags=DEFAULT_LIB_LFLAGS, link_dirs=set(), logger_severity=Logger.Severity.INFO):
+    def __init__(self, project_source_dirs=set(["."]), project_include_dirs=set(), build_dir="build", compiler=GCC, cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), logger_severity=Logger.Severity.INFO):
         # Logging
         self.logger: Logger = Logger(logger_severity)
 
         # The assumption is that the caller of the init function is the MGen file for the build.
-        frame = inspect.stack()[1][0]
-        self.root_dir = os.path.abspath(os.path.dirname(frame.f_code.co_filename))
+        self.root_dir = os.path.abspath(os.path.dirname(inspect.stack()[1][0].f_code.co_filename))
         self.logger.info(f"Using root directory: {self.root_dir}")
 
         self.project_source_dirs: Set[str] = utils.locate_paths(project_source_dirs, self.root_dir, self.logger, ErrorType=FileNotFoundError)
         self.logger.debug(f"Using project source directories: {self.project_source_dirs}")
-        self.project_include_dirs: Set[str] = utils.locate_paths(project_include_dirs, self.root_dir, self.logger, ErrorType=FileNotFoundError)
-        self.logger.debug(f"Using project include directories: {self.project_include_dirs}")
         # Only a single build directory should be found
         self.build_dir: str = utils.locate_paths(build_dir, self.root_dir, self.logger, ErrorType=FileNotFoundError).pop()
         self.logger.debug(f"Using project build directory: {self.build_dir}")
 
         # Compiler options
-        self.compiler: str = compiler
-        self.cflags: Set[str] = utils.convert_to_set(cflags)
-        self.include_dirs: Set[str] = utils.convert_to_set(include_dirs)
-        self.exec_lflags: Set[str] = utils.convert_to_set(exec_lflags)
-        self.lib_lflags: Set[str] = utils.convert_to_set(lib_lflags)
+        self.compiler: BaseCompiler = compiler
+        self.cflags: Set[str] = utils.convert_to_set(cflags) if cflags else compiler.default_flags
+
+        project_include_dirs: Set[str] = utils.locate_paths(project_include_dirs, self.root_dir, self.logger, ErrorType=FileNotFoundError)
+        self.logger.debug(f"Using project include directories: {project_include_dirs}")
+        self.include_dirs: Set[str] = utils.convert_to_set(include_dirs) | project_include_dirs
+
+        self.lflags: Set[str] = utils.convert_to_set(lflags) if lflags else compiler.default_flags
         self.link_dirs: Set[str] = utils.convert_to_set(link_dirs)
         # Keep track of user-defined targets.
         self.targets: Set[Target] = set()
         # Keep track of all the makefile targets as well.
         self.makefile_targets: Set[MakefileTarget] = set()
-
         # Also keep track of which libraries are internal to the project and their corresponding targets.
         self.libraries: Dict[str, Target] = {}
+        # Use a header manager.
+        self.header_manager = HeaderManager(project_include_dirs, self.logger)
 
-    def _generate_target(self, name: str, sources: Set[str], libraries: Set[str], cflags: Set[str], include_dirs: Set[str], lflags: Set[str], link_dirs: Set[str], compiler) -> Target:
+    def _generate_target(self, name: str, sources: Set[str], libraries: Set[str], cflags: Set[str], include_dirs: Set[str], lflags: Set[str], link_dirs: Set[str], compiler: BaseCompiler) -> Target:
         # Add global options to each executable. This makes the Targets returned to the user complete.
         # TODO: Make output directory configurable per target?
-        path = os.path.join(self.build_dir, name)
+        # Sources and header dependencies.
         sources = utils.locate_paths(sources, self.project_source_dirs, self.logger, FileNotFoundError)
+        source_map = {}
+        for source in sources:
+            source_map[source] = self.header_manager.locate_headers(source)
+        # Compiler settings.
         libraries = utils.convert_to_set(libraries)
         cflags = utils.convert_to_set(cflags) | self.cflags
-        include_dirs = utils.convert_to_set(include_dirs) | self.include_dirs | self.project_include_dirs
-        lflags = utils.convert_to_set(lflags)
+        include_dirs = utils.convert_to_set(include_dirs) | self.include_dirs
+        lflags = utils.convert_to_set(lflags) | self.lflags
         link_dirs = utils.convert_to_set(link_dirs) | self.link_dirs
         compiler = compiler if compiler else self.compiler
-        target = Target(name, path, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler)
+        target = Target(name, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, self.build_dir, self.logger)
         self.targets.add(target)
         return target
 
-    # Given a file, recursively locates all headers in that file.
-    def _locate_headers(self, filename, header_cache):
-        # First check the cache, so we don't recurse unnecessarily.
-        if filename in header_cache:
-            self.logger.debug(f"Found {filename} in header cache. Using headers: {header_cache[filename]}")
-            return header_cache[filename]
-        # Find the headers in this file.
-        headers = utils.find_included_files(filename)
-        headers, notfound = utils.locate_paths(headers, self.project_include_dirs, self.logger)
-        if notfound:
-            self.logger.warning(f"For {filename}, assuming {notfound} are external headers. If this is incorrect, please set project_include_dirs correctly (currently set to {self.project_include_dirs}).")
-        # Next find the headers contained within those headers.
-        all_headers = set() | headers
-        for header in headers:
-            self.logger.debug(f"For {filename}, recursing through {header}")
-            all_headers |= self._locate_headers(header, header_cache)
-        # Cache
-        self.logger.debug(f"Adding entry to header cache: {filename}: {all_headers}")
-        header_cache[filename] = all_headers
-        return all_headers
-
-    # Given a target, generate all intermediate targets required.
-    def _generate_intermediate_targets(self, target, header_cache):
-        # Generate an object target for the given source using information from the target.
-        def generate_object_target(source, target):
-            # Generates an object name for this source file.
-            def generate_object_name(source):
-                # Prepare the target. We name object files based on compiler + cflags.
-                # The assumption is that if these are the same between two objects, they are equivalent.
-                # TODO: Object subdirectory name is hardcoded here. Change that?
-                outpath = os.path.join(self.build_dir, "objs", os.path.dirname(os.path.relpath(source, self.root_dir)))
-                # uid is everything about the target that makes it unique i.e. compiler + flags.
-                # Some of the flags need to be sanitized first though.
-                san_cflags = [flag.replace("=", "eq") for flag in target.cflags]
-                uid = f"{target.compiler}{''.join(san_cflags)}"
-                filename = f"{os.path.basename(os.path.splitext(source)[0])}.{uid}.o"
-                return outpath, filename
-
-            commands = []
-            outpath, filename = generate_object_name(source)
-            self.logger.debug(f"For {source}, using filename: {filename} and directory: {outpath}")
-            # Make sure the directory exists when building the target.
-            commands.append(f"mkdir -p {outpath}")
-            path = os.path.join(outpath, filename)
-            # Locate dependencies
-            headers = self._locate_headers(source, header_cache)
-            self.logger.debug(f"For {source}, found headers: {headers}")
-            # Add compilation command.
-            commands.append(f"{target.compiler} {source} -o {path} {utils.prefix_join(target.include_dirs, '-I')} {' '.join(target.cflags)}")
-            return MakefileTarget(name=path, dependencies=headers, commands=commands)
-
-        # At this point, each source is guaranteed to be an absolute path.
-        makefile_targets: Set[MakefileTarget] = set()
-        objects = set()
-        for source in target.sources:
-            obj_target = generate_object_target(source, target)
-            self.logger.debug(f"Adding Makefile Target:\n{obj_target}")
-            makefile_targets.add(obj_target)
-            # Keep track of the resulting object.
-            objects.add(obj_target.name)
-            self.logger.debug(f"Adding object {obj_target.name} for {source}")
-
-        # For internal libs, get paths from self.libraries, otherwise, prefix with -l.
-        deps = set() | objects
-        libs = set()
+    # Processes libs for a target. That is, for internal libs, it sets the correct path and updates dependencies.
+    # For external libs, it prefixes with -l
+    def _process_target_libs(self, target):
+        print("LIBRARIES")
+        print(self.libraries)
         for lib in target.libraries:
+            target.libraries.remove(lib)
             if lib in self.libraries:
                 libname = self.libraries[lib].path
-                libs.add(libname)
-                deps.add(libname)
+                target.libraries.add(libname)
+                target.deps.add(libname)
             else:
-                libs.add(utils.prefix("-l", lib))
-
-        command = f"{target.compiler} {' '.join(objects)} -o {target.path} {utils.prefix_join(target.link_dirs, '-L')} {' '.join(libs)} {' '.join(target.lflags)}"
-        # Generate a phony target as a shorthand representation for this target.
-        makefile_targets.add(MakefileTarget(name=target.name, dependencies=target.path, phony=True))
-        # Finally, generate a target for the final linked executable/library.
-        makefile_targets.add(MakefileTarget(name=target.path, dependencies=deps, commands=command))
-        return makefile_targets
+                target.libraries.add(utils.prefix("-l", lib) if not lib.endswith(".so") else lib)
 
     """
     API Functions
@@ -211,14 +169,14 @@ class MGen(object):
             include_dirs (Set[str]): Include directories for source files.
             lflags (Set[str]): Flags to use while linking constituent object files.
             link_dirs (Set[str]): Link directories for libraries.
+            compiler (BaseCompiler): The compiler to use.
 
         Returns:
             Target: A new target representing the executable.
         """
-        lflags = utils.convert_to_set(lflags) | self.exec_lflags
         return self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler)
 
-    def add_library(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None, library_type=LibraryType.SHARED) -> Target:
+    def add_library(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None) -> Target:
         """
         Adds a library to be generated based on the specified source files.
 
@@ -230,15 +188,14 @@ class MGen(object):
             include_dirs (Set[str]): Include directories for source files.
             lflags (Set[str]): Flags to use while linking constituent object files.
             link_dirs (Set[str]): Link directories for libraries.
+            compiler (BaseCompiler): The compiler to use.
 
         Returns:
             Target: A new target representing the library.
         """
-        lflags = utils.convert_to_set(lflags) | self.lib_lflags
-        libname = name
-        if library_type == LibraryType.SHARED:
-            libname = utils.wrap("lib", name, ".so")
-        target = self._generate_target(libname, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler)
+        target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler)
+        # Add the shared flag.
+        target.lflags.add(target.compiler.shared)
         self.libraries[name] = target
         return target
 
@@ -246,12 +203,11 @@ class MGen(object):
         """
         Generates a Makefile.
         """
-        # Keep a cache of header -> dependencies.
-        header_cache: Dict[str, Set[str]] = {}
         all_deps = []
         # Walk over all the targets. For each one, we add an intermediate target for each source file.
         for target in self.targets:
-            self.makefile_targets |= self._generate_intermediate_targets(target, header_cache)
+            self._process_target_libs(target)
+            self.makefile_targets |= target.generate_makefile_targets()
             all_deps.append(target.path)
 
         # Add a clean target.
