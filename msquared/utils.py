@@ -2,7 +2,6 @@
 Utility functions.
 """
 from typing import Set
-import re
 import os
 
 # Prepends a string with a prefix only if the string does not already have that prefix.
@@ -15,6 +14,13 @@ def suffix(input_string: str, post: str) -> str:
     if input_string.endswith(post):
         return input_string
     return input_string + post
+
+def suffix_before_extension(input_string: str, post: str) -> str:
+    split_name = list(os.path.splitext(input_string))
+    if split_name[0].endswith(post):
+        return input_string
+    split_name.insert(1, post)
+    return ''.join(split_name)
 
 def wrap(pre: str, input_string: str, post: str) -> str:
     return suffix(prefix(pre, input_string), post)
@@ -89,9 +95,3 @@ def locate_paths(paths: Set[str], dirs: Set[str], logger, ErrorType: type = None
         return abspaths
     else:
         return abspaths, notfound
-
-# Finds all #include's in a file.
-def find_included_files(filename: str) -> Set[str]:
-    with open(filename, 'r') as file:
-        # Match includes of the form #include <.*> and #include ".*" excluding commented out lines.
-        return set(re.findall('(?:(?<!\/\/\s))#include [<"]([^>"]*)[>"]', file.read()))

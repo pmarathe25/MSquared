@@ -21,8 +21,9 @@ class Target(object):
             lflags (Set[str]): Linker flags for this target.
             link_dirs (Set[str]): Link directories for this target.
         """
-        self.name = name
-        self.path = os.path.join(out_dir, name)
+        self.target_out_dir = out_dir
+        self.update_name(name)
+        self.update_obj_subdir("objs")
         self.source_map = source_map
         self.objects = set()
         self.deps = set()
@@ -32,9 +33,19 @@ class Target(object):
         self.lflags = lflags
         self.link_dirs = link_dirs
         self.compiler = compiler
-        self.target_out_dir = out_dir
-        self.obj_out_dir = os.path.join(out_dir, "objs")
         self.logger = logger
+
+    def update_name(self, name):
+        self.name = name
+        self.path = os.path.join(self.target_out_dir, name)
+        self.clean_name = f"clean_{self.name}"
+
+    def update_obj_subdir(self, subdir):
+        self.obj_out_dir = os.path.join(self.target_out_dir, subdir)
+
+    def add_flags(self, flags):
+        self.cflags |= utils.convert_to_set(flags)
+        self.lflags |= utils.convert_to_set(flags)
 
     # Generate a MakefileTarget for a source file.
     def generate_object_target(self, source):
@@ -49,43 +60,49 @@ class Target(object):
             self.logger.debug(f"For {source}, using filename: {filename} and directory: {self.obj_out_dir}")
             return os.path.join(self.obj_out_dir, filename)
 
-        commands = []
         path = generate_object_name(source)
         # Add to this target's dependencies.
         self.objects.add(path)
         self.deps.add(path)
+        commands = []
         # Make sure the directory exists when building the target.
         commands.append(f"mkdir -p {os.path.dirname(path)}")
         # Add compilation command.
-        commands.append(f"{self.compiler.name} {source} -o {path} {utils.prefix_join(self.include_dirs, '-I')} {' '.join(self.cflags)} {self.compiler.compile_only}")
+        commands.append(f'echo -e "\\e[32mCompiling {source}"')
+        commands.append(f"{self.compiler.name} {source} -o {path}{utils.prefix_join(self.include_dirs, ' -I')} {' '.join(self.cflags)} {self.compiler.compile_only}")
         return MakefileTarget(name=path, dependencies=self.source_map[source], commands=commands)
 
     def generate_makefile_targets(self):
         # TODO: Docstring.
 
         # First, generate all object targets.
-        makefile_targets = set()
+        makefile_targets = []
         for source in self.source_map.keys():
             self.logger.debug(f"Generating object target for {source}")
-            makefile_targets.add(self.generate_object_target(source))
+            makefile_targets.append(self.generate_object_target(source))
 
-        command = f"{self.compiler.name} {' '.join(self.objects)} -o {self.path} {utils.prefix_join(self.link_dirs, '-L')} {' '.join(self.libraries)} {' '.join(self.lflags)}"
+        commands = []
+        commands.append(f'echo -e "\\e[92m\\e[1mLinking {self.name}"')
+        commands.append(f"{self.compiler.name} {' '.join(self.objects)} -o {self.path}{utils.prefix_join(self.link_dirs, ' -L')} {' '.join(self.libraries)} {' '.join(self.lflags)}")
         # Generate a phony target as a shorthand representation for this target.
-        makefile_targets.add(MakefileTarget(name=self.name, dependencies=self.path, phony=True))
+        makefile_targets.append(MakefileTarget(name=self.name, dependencies=self.path, phony=True, help=f"Builds {self.name}"))
         # Finally, generate a target for the final linked executable/library.
-        makefile_targets.add(MakefileTarget(name=self.path, dependencies=self.deps, commands=command))
+        makefile_targets.append(MakefileTarget(name=self.path, dependencies=self.deps, commands=commands))
+        # Add a clean target.
+        makefile_targets.append(MakefileTarget(name=self.clean_name, commands=f"rm -rf {self.path} {' '.join(self.objects)}", phony=True, help=f"Removes {self.name} and its constituent object files."))
         return makefile_targets
 
 # Represents a target in a makefile. This consists of a name, dependencies, and commands.
 class MakefileTarget(object):
-    def __init__(self, name: str, dependencies = set(), commands = list(), phony = False):
+    def __init__(self, name: str, dependencies = set(), commands = [], phony = False, help=""):
         self.name = name
         self.dependencies = utils.convert_to_set(dependencies)
         self.commands = utils.convert_to_list(commands)
         self.phony = phony
+        self.help = help
 
     def __str__(self):
-        cmd_sep = "\n\t"
+        cmd_sep = "\n\t$(AT)"
         phony_line = f".PHONY: {self.name}"
         target_line = f"{self.name}:{utils.prefix_join(self.dependencies)}{utils.prefix_join(self.commands, cmd_sep)}"
         return f"{phony_line}\n{target_line}" if self.phony else f"{target_line}"

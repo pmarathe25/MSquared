@@ -2,11 +2,13 @@ from msquared import utils
 from msquared.Logger import Logger
 from msquared.Target import Target, MakefileTarget
 from msquared.Compilers import *
-from typing import Dict, List, Set, Union
+from msquared.HeaderManager import HeaderManager
+from typing import Dict, List, Set
 from datetime import datetime
 import inspect
 import enum
 import os
+import copy
 
 """
 API Functions
@@ -51,33 +53,6 @@ def wrap(prefix, objs, suffix):
     """
     return [prefix + obj + suffix for obj in objs]
 
-class HeaderManager(object):
-    def __init__(self, header_dirs, logger):
-        self.header_dirs: Set[str] = header_dirs
-        self.logger: Logger = logger
-        self.header_cache: Dict[str, Set[str]] = {}
-
-    # Given a file, recursively locates all headers in that file.
-    def locate_headers(self, filename):
-        # First check the cache, so we don't recurse unnecessarily.
-        if filename in self.header_cache:
-            self.logger.debug(f"Found {filename} in header cache. Using headers: {self.header_cache[filename]}")
-            return self.header_cache[filename]
-        # Find the headers in this file.
-        headers = utils.find_included_files(filename)
-        headers, notfound = utils.locate_paths(headers, self.header_dirs, self.logger)
-        if notfound:
-            self.logger.warning(f"For {filename}, assuming {notfound} are external headers. If this is incorrect, please set project_include_dirs correctly (currently set to {self.header_dirs}).")
-        # Next find the headers contained within those headers.
-        all_headers = set() | headers
-        for header in headers:
-            self.logger.debug(f"For {filename}, recursing through {header}")
-            all_headers |= self.locate_headers(header)
-        # Cache
-        self.logger.debug(f"Adding entry to header cache: {filename}: {all_headers}")
-        self.header_cache[filename] = all_headers
-        return all_headers
-
 class MGen(object):
     # TODO: Generalize for different compilers
     """
@@ -115,7 +90,7 @@ class MGen(object):
         # Keep track of user-defined targets.
         self.targets: Set[Target] = set()
         # Keep track of all the makefile targets as well.
-        self.makefile_targets: Set[MakefileTarget] = set()
+        self.makefile_targets: List[MakefileTarget] = []
         # Also keep track of which libraries are internal to the project and their corresponding targets.
         self.libraries: Dict[str, Target] = {}
         # Use a header manager.
@@ -139,20 +114,6 @@ class MGen(object):
         target = Target(name, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, self.build_dir, self.logger)
         self.targets.add(target)
         return target
-
-    # Processes libs for a target. That is, for internal libs, it sets the correct path and updates dependencies.
-    # For external libs, it prefixes with -l
-    def _process_target_libs(self, target):
-        print("LIBRARIES")
-        print(self.libraries)
-        for lib in target.libraries:
-            target.libraries.remove(lib)
-            if lib in self.libraries:
-                libname = self.libraries[lib].path
-                target.libraries.add(libname)
-                target.deps.add(libname)
-            else:
-                target.libraries.add(utils.prefix("-l", lib) if not lib.endswith(".so") else lib)
 
     """
     API Functions
@@ -203,25 +164,52 @@ class MGen(object):
         """
         Generates a Makefile.
         """
-        all_deps = []
+        # Processes libs for a target. That is, for internal libs, it sets the correct path and updates dependencies.
+        # For external libs, it prefixes with -l
+        def _process_target_libs(target):
+            libs = set()
+            for lib in target.libraries:
+                if lib in self.libraries:
+                    libname = self.libraries[lib].path
+                    libs.add(libname)
+                    target.deps.add(libname)
+                else:
+                    libs.add(utils.prefix("-l", lib) if not lib.endswith(".so") else lib)
+            target.libraries = libs
+
+        release_targets, debug_targets = [], []
         # Walk over all the targets. For each one, we add an intermediate target for each source file.
         for target in self.targets:
-            self._process_target_libs(target)
-            self.makefile_targets |= target.generate_makefile_targets()
-            all_deps.append(target.path)
+            _process_target_libs(target)
+            self.makefile_targets.extend(target.generate_makefile_targets())
+            release_targets.append(target.path)
+            # Add debug targets as well.
+            debug_target = copy.deepcopy(target)
+            debug_target.update_obj_subdir("dobjs")
+            debug_target.add_flags(debug_target.compiler.debug)
+            debug_target.update_name(utils.suffix_before_extension(debug_target.name, "_debug"))
+            self.makefile_targets.extend(debug_target.generate_makefile_targets())
+            debug_targets.append(debug_target.path)
 
         # Add a clean target.
-        self.makefile_targets.add(MakefileTarget(name="clean", commands=f"rm -rf {self.build_dir}", phony=True))
-
-        # TODO: Add a help target.
+        self.makefile_targets.append(MakefileTarget(name="clean", commands=f"rm -rf {self.build_dir}", phony=True, help=f"Removes the entire build directory"))
 
         # Create an all target as the first target.
-        all_target = MakefileTarget(name="all", dependencies=all_deps, phony=True)
-        final_targets = [all_target] + list(self.makefile_targets)
+        self.makefile_targets.insert(0, MakefileTarget(name="release", dependencies=release_targets, phony=True, help=f"Builds release targets specified in this Makefile"))
+        self.makefile_targets.insert(1, MakefileTarget(name="debug", dependencies=debug_targets, phony=True, help=f"Builds release targets specified in this Makefile"))
 
-        # Create the final makefile.
+        # Unique-ify the targets
+        self.makefile_targets = list(dict.fromkeys(self.makefile_targets))
+
+        # Add a help target.
+        help_target = MakefileTarget(name="help", phony=True, commands=[f'echo "\t{t.name}: {t.help}"' for t in self.makefile_targets if t.help])
+        self.makefile_targets.append(help_target)
+
+        # Create the final Makefile.
         target_sep = "\n\n"
-        Makefile = f"{MGen._get_makefile_header()}{utils.prefix_join(final_targets, target_sep)}"
+        # Add verbosity options
+        verbosity = f"ifdef VERBOSE\n\tAT=\nelse\n\tAT=@\nendif"
+        Makefile = f"{MGen._get_makefile_header()}\n{verbosity}{utils.prefix_join(self.makefile_targets, target_sep)}"
         # Remove all MakefileTargets
         self.makefile_targets.clear()
         return Makefile
