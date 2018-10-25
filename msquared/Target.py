@@ -6,8 +6,9 @@ import os
 # A Target represents a linked target, like a library or executable.
 # It has cflags and include_dirs, which are propagated to constituent objects
 # (based on deps), as well as lflags and link_dirs which it uses.
+# TODO: Add install targets here.
 class Target(object):
-    def __init__(self, name: str, source_map=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler="", out_dir="", logger=Logger()):
+    def __init__(self, name: str, source_map=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler="", out_dir="", logger=Logger(), obj_out_dir="objs"):
         # TODO: Update docstring.
         """
         Represents an executable or library.
@@ -22,11 +23,9 @@ class Target(object):
             link_dirs (Set[str]): Link directories for this target.
         """
         self.target_out_dir = out_dir
-        self.update_name(name)
-        self.update_obj_subdir("objs")
+        self.set_name(name)
+        self.obj_out_dir = obj_out_dir
         self.source_map = source_map
-        self.objects = set()
-        self.deps = set()
         self.libraries = libraries
         self.cflags = cflags
         self.include_dirs = include_dirs
@@ -35,13 +34,10 @@ class Target(object):
         self.compiler = compiler
         self.logger = logger
 
-    def update_name(self, name):
+    def set_name(self, name):
         self.name = name
         self.path = os.path.join(self.target_out_dir, name)
         self.clean_name = f"clean_{self.name}"
-
-    def update_obj_subdir(self, subdir):
-        self.obj_out_dir = os.path.join(self.target_out_dir, subdir)
 
     def add_flags(self, flags):
         self.cflags |= utils.convert_to_set(flags)
@@ -61,35 +57,42 @@ class Target(object):
             return os.path.join(self.obj_out_dir, filename)
 
         path = generate_object_name(source)
-        # Add to this target's dependencies.
-        self.objects.add(path)
-        self.deps.add(path)
         commands = []
         # Make sure the directory exists when building the target.
         commands.append(f"mkdir -p {os.path.dirname(path)}")
         # Add compilation command.
-        commands.append(f'echo -e "\\e[32mCompiling {source}"')
+        commands.append(f'echo -e "\\e[32mCompiling {source}\\e[0m"')
         commands.append(f"{self.compiler.name} {source} -o {path}{utils.prefix_join(self.include_dirs, ' -I')} {' '.join(self.cflags)} {self.compiler.compile_only}")
         return MakefileTarget(name=path, dependencies=self.source_map[source], commands=commands)
 
-    def generate_makefile_targets(self):
+    def generate_makefile_targets(self, library_registry):
         # TODO: Docstring.
-
         # First, generate all object targets.
         makefile_targets = []
         for source in self.source_map.keys():
             self.logger.debug(f"Generating object target for {source}")
-            makefile_targets.append(self.generate_object_target(source))
+            obj_target = self.generate_object_target(source)
+            makefile_targets.append(obj_target)
+
+        objects = set([obj.name for obj in makefile_targets])
+        # Distinguish between libraries created internal to the project vs external dependencies.
+        internal_libraries = set()
+        external_libraries = set()
+        for lib in self.libraries:
+            if lib in library_registry:
+                internal_libraries.add(library_registry[lib])
+            else:
+                external_libraries.add(utils.prefix("-l", lib) if not utils.hasext(lib) else lib)
 
         commands = []
-        commands.append(f'echo -e "\\e[92m\\e[1mLinking {self.name}"')
-        commands.append(f"{self.compiler.name} {' '.join(self.objects)} -o {self.path}{utils.prefix_join(self.link_dirs, ' -L')} {' '.join(self.libraries)} {' '.join(self.lflags)}")
+        commands.append(f'echo -e "\\e[92m\\e[1mLinking {self.name}\\e[0m"')
+        commands.append(f"{self.compiler.name} {' '.join(objects)} -o {self.path}{utils.prefix_join(self.link_dirs, ' -L')} {' '.join(internal_libraries | external_libraries)} {' '.join(self.lflags)}")
         # Generate a phony target as a shorthand representation for this target.
         makefile_targets.append(MakefileTarget(name=self.name, dependencies=self.path, phony=True, help=f"Builds {self.name}"))
         # Finally, generate a target for the final linked executable/library.
-        makefile_targets.append(MakefileTarget(name=self.path, dependencies=self.deps, commands=commands))
+        makefile_targets.append(MakefileTarget(name=self.path, dependencies=(objects | internal_libraries), commands=commands))
         # Add a clean target.
-        makefile_targets.append(MakefileTarget(name=self.clean_name, commands=f"rm -rf {self.path} {' '.join(self.objects)}", phony=True, help=f"Removes {self.name} and its constituent object files."))
+        makefile_targets.append(MakefileTarget(name=self.clean_name, commands=f"rm -rf {self.path} {' '.join(objects)}", phony=True, help=f"Removes {self.name} and its constituent object files."))
         return makefile_targets
 
 # Represents a target in a makefile. This consists of a name, dependencies, and commands.

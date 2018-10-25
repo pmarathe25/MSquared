@@ -25,6 +25,9 @@ def suffix_before_extension(input_string: str, post: str) -> str:
 def wrap(pre: str, input_string: str, post: str) -> str:
     return suffix(prefix(pre, input_string), post)
 
+def hasext(path: str) -> bool:
+    return bool(os.path.splitext(path)[1])
+
 # Joins elements of an iterable with a prefix.
 def prefix_join(iterable, prefix = ' ') -> str:
     if len(iterable) > 0:
