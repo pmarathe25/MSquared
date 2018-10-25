@@ -1,6 +1,7 @@
 from typing import List, Set, Dict
 from msquared import utils
 from msquared.Logger import Logger
+import sys
 import os
 
 # Represents a target in a makefile. This consists of a name, dependencies, and commands.
@@ -33,7 +34,7 @@ class MakefileTarget(object):
 # (based on deps), as well as lflags and link_dirs which it uses.
 # TODO: Change shell commands to the same way compilers are done.
 class Target(object):
-    def __init__(self, name: str, source_map=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler="", out_dir="", logger=Logger(), obj_out_dir="", install_dir=""):
+    def __init__(self, name: str, path: str, source_map=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler="", logger=Logger(), obj_out_dir="", install_dir=""):
         """
         Represents an executable or library.
 
@@ -53,7 +54,7 @@ class Target(object):
             obj_out_dir (str): The output directory for intermediate build artifacts.
             install_dir (str): The directory to install the final build artifact to.
         """
-        self.target_out_dir = out_dir
+        self.path = path
         self.set_name(name)
         self.obj_out_dir = obj_out_dir
         self.source_map = source_map
@@ -72,7 +73,6 @@ class Target(object):
 
     def set_name(self, name: str) -> None:
         self.name = name
-        self.path = os.path.join(self.target_out_dir, name)
         self.clean_name = f"clean_{self.name}"
         self.install_name = f"install_{self.name}"
         self.uninstall_name = f"uninstall_{self.name}"
@@ -82,36 +82,38 @@ class Target(object):
         self.lflags |= utils.convert_to_set(flags)
 
     # Generate a MakefileTarget for a source file.
-    def generate_object_target(self, source: str) -> MakefileTarget:
+    def generate_object_target(self, source: str, human_readable_object_names=False) -> MakefileTarget:
         # Generates an object name for this source file.
         def generate_object_path(source):
             # Prepare the target. We name object files based on compiler + cflags.
             # The assumption is that if these are the same between two objects, they are equivalent.
             # Some of the flags need to be sanitized first though.
-            san_cflags = [flag.replace("=", "eq") for flag in self.cflags]
-            uid = f"{self.compiler.name}{''.join(san_cflags)}"
+            san_cflags = [self.compiler.name] + [flag.replace("=", "eq") for flag in self.cflags] + utils.convert_to_list(self.include_dirs)
+            uid = f"{hash(tuple(san_cflags)) % ((sys.maxsize + 1) * 2)}"
+            if human_readable_object_names:
+                uid = f"{''.join(san_cflags)}"
             filename = f"{os.path.basename(os.path.splitext(source)[0])}.{uid}.o"
             self.logger.debug(f"For {source}, using filename: {filename} and directory: {self.obj_out_dir}")
             return os.path.join(self.obj_out_dir, filename)
 
-        path = generate_object_path(source)
+        object_path = generate_object_path(source)
         commands = []
         # Make sure the directory exists when building the target.
-        commands.append(f"mkdir -p {os.path.dirname(path)}")
+        commands.append(f"mkdir -p {os.path.dirname(object_path)}")
         # Add compilation command.
-        commands.append(f'echo -e "\\e[32mCompiling {source}\\e[0m"')
-        commands.append(f"{self.compiler.name} {source} -o {path}{utils.prefix_join(self.include_dirs, ' -I')} {' '.join(self.cflags)} {self.compiler.compile_only}")
-        return MakefileTarget(name=path, dependencies=self.source_map[source], commands=commands)
+        commands.append(f'echo -e "\\e[32mCompiling {object_path}\\e[0m"')
+        commands.append(f"{self.compiler.name} {source} -o {object_path}{utils.prefix_join(self.include_dirs, ' -I')} {' '.join(self.cflags)} {self.compiler.compile_only}")
+        return MakefileTarget(name=object_path, dependencies=self.source_map[source], commands=commands)
 
     # TODO: Docstrings.
-    def generate_build_targets(self, library_registry: Dict[str, str]) -> List[MakefileTarget]:
-        if not self.source_map:
+    def generate_build_targets(self, library_registry: Dict[str, str], human_readable_object_names=False) -> List[MakefileTarget]:
+        if not self.source_map or not self.compiler:
             return []
         # First, generate all object targets.
         makefile_targets = []
         for source in self.source_map.keys():
             self.logger.debug(f"Generating object target for {source}")
-            obj_target = self.generate_object_target(source)
+            obj_target = self.generate_object_target(source, human_readable_object_names)
             makefile_targets.append(obj_target)
 
         objects = set([obj.name for obj in makefile_targets])
@@ -125,7 +127,7 @@ class Target(object):
                 external_libraries.add(utils.prefix("-l", lib) if not utils.hasext(lib) else lib)
 
         commands = []
-        commands.append(f'echo -e "\\e[92m\\e[1mLinking {self.name}\\e[0m"')
+        commands.append(f'echo -e "\\e[92m\\e[1mLinking {self.path}\\e[0m"')
         commands.append(f"{self.compiler.name} {' '.join(objects)} -o {self.path}{utils.prefix_join(self.link_dirs, ' -L')} {' '.join(internal_libraries | external_libraries)} {' '.join(self.lflags)}")
         # Finally, generate a target for the final linked executable/library.
         makefile_targets.append(MakefileTarget(name=self.path, dependencies=(objects | internal_libraries), commands=commands))
@@ -134,7 +136,7 @@ class Target(object):
         return makefile_targets
 
     def generate_phony_target(self) -> List[MakefileTarget]:
-        if self.name == self.path:
+        if self.name == self.path or not self.source_map or not self.compiler:
             return []
         # Generate a phony target as a shorthand representation for this target.
         return utils.convert_to_list(MakefileTarget(name=self.name, dependencies=self.path, phony=True, help=f"Builds {self.name}"))
@@ -160,4 +162,4 @@ class Target(object):
         commands.append(f'echo -e "\\e[31m\\e[1mUninstalling {os.path.join(self.install_dir, filename)}\\e[0m"')
         commands.append(f"{sudo}rm -rf {os.path.join(self.install_dir, filename)}")
         commands.append(f"{sudo}rmdir --ignore-fail-on-non-empty {self.install_dir}")
-        return utils.convert_to_list(MakefileTarget(name=self.uninstall_name, phony=True, commands=commands, help=f"Removes {self.path} from {self.install_dir} and then removes the directory if it is empty."))
+        return utils.convert_to_list(MakefileTarget(name=self.uninstall_name, phony=True, commands=commands, help=f"Removes {os.path.join(self.install_dir, filename)} and then removes the directory if it is empty."))

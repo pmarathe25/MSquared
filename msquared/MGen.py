@@ -112,10 +112,13 @@ class MGen(object):
         output_directory = output_directory if output_directory else self.build_dir
         install_dir = os.path.join(self.root_dir, install_dir) if install_dir and not os.path.isabs(install_dir) else install_dir
         # Add release target.
-        target = Target(name, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, out_dir=output_directory, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "objs"), install_dir=install_dir)
+        path = os.path.abspath(os.path.join(output_directory, name))
+        target = Target(name, path, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "objs"), install_dir=install_dir)
         self.release_targets.append(target)
         # Add debug target.
-        debug_target = Target(utils.suffix_before_extension(name, "_debug"), source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, out_dir=output_directory, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "dobjs"))
+        debug_name = utils.suffix_before_extension(name, "_debug")
+        debug_path = os.path.abspath(os.path.join(output_directory, debug_name))
+        debug_target = Target(debug_name, debug_path, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "dobjs"))
         debug_target.add_flags(debug_target.compiler.debug)
         self.debug_targets.append(debug_target)
         return target, debug_target
@@ -178,7 +181,17 @@ class MGen(object):
         self.library_registry[debug_target.name] = debug_target.path
         return target
 
-    def generate(self):
+    def add_install(self, path: str, install_directory: str):
+        # FIXME: This may cause name collisions for files with the same name but different paths.
+        name = os.path.basename(path)
+        path = os.path.join(self.root_dir, path) if not os.path.isabs(path) else path
+        if not os.path.exists(path):
+            self.logger.error(f"Could not find {path}", FileNotFoundError)
+        target = Target(name=name, path=path, install_dir=install_directory)
+        self.release_targets.append(target)
+        return target
+
+    def generate(self, human_readable_object_names=False):
         """
         Generates a Makefile.
         """
@@ -188,7 +201,7 @@ class MGen(object):
         install_targets = []
         uninstall_targets = []
         for target in self.release_targets + self.debug_targets:
-            build_targets |= utils.convert_to_set(target.generate_build_targets(self.library_registry))
+            build_targets |= utils.convert_to_set(target.generate_build_targets(self.library_registry, human_readable_object_names))
             phony_targets.extend(target.generate_phony_target())
             install_targets.extend(target.generate_install_target())
             uninstall_targets.extend(target.generate_uninstall_target())
@@ -205,7 +218,6 @@ class MGen(object):
         phony_targets.insert(1, MakefileTarget(name="release", dependencies=[tgt.path for tgt in self.release_targets], phony=True, help=f"Builds release targets specified in this Makefile."))
         phony_targets.insert(2, MakefileTarget(name="debug", dependencies=[tgt.path for tgt in self.debug_targets], phony=True, help=f"Builds debug targets specified in this Makefile."))
 
-
         all_targets = phony_targets + utils.convert_to_list(build_targets) + install_targets + uninstall_targets
 
         # Add a help target.
@@ -219,8 +231,8 @@ class MGen(object):
         Makefile = f"{MGen._get_makefile_header()}\n{verbosity}{utils.prefix_join(all_targets, target_sep)}"
         return Makefile
 
-    def write(self, filename = "Makefile") -> None:
-        makefile = self.generate()
+    def write(self, filename = "Makefile", human_readable_object_names=False) -> None:
+        makefile = self.generate(human_readable_object_names)
         # Assume the file is relative to the root directory.
         if not os.path.isabs(filename):
             filename = os.path.join(self.root_dir, filename)
