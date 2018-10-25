@@ -89,6 +89,7 @@ class MGen(object):
         # Keep track of user-defined targets.
         self.release_targets: List[Target] = []
         self.debug_targets: List[Target] = []
+        self.install_targets: List[Target] = []
         # Use a header manager.
         self.header_manager = HeaderManager(project_include_dirs, self.logger)
         # Map library names to the exact name used for linking them. When a library is added, or any target
@@ -133,7 +134,7 @@ class MGen(object):
                 self.logger.error(f"Directory {build_dir} already exists, will not use as build directory.", OSError)
             self.build_dir = build_dir
         else:
-            self.build_dir: str = os.path.join(self.root_dir, build_dir)
+            self.build_dir = os.path.join(self.root_dir, build_dir)
         self.logger.debug(f"Using project build directory: {self.build_dir}")
 
     def add_executable(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None, output_directory=None, install_directory=None) -> Target:
@@ -188,7 +189,7 @@ class MGen(object):
         if not os.path.exists(path):
             self.logger.error(f"Could not find {path}", FileNotFoundError)
         target = Target(name=name, path=path, install_dir=install_directory)
-        self.release_targets.append(target)
+        self.install_targets.append(target)
         return target
 
     def generate(self, human_readable_object_names=False):
@@ -200,7 +201,7 @@ class MGen(object):
         phony_targets = []
         install_targets = []
         uninstall_targets = []
-        for target in self.release_targets + self.debug_targets:
+        for target in self.release_targets + self.debug_targets + self.install_targets:
             build_targets |= utils.convert_to_set(target.generate_build_targets(self.library_registry, human_readable_object_names))
             phony_targets.extend(target.generate_phony_target())
             install_targets.extend(target.generate_install_target())
@@ -231,7 +232,7 @@ class MGen(object):
         Makefile = f"{MGen._get_makefile_header()}\n{verbosity}{utils.prefix_join(all_targets, target_sep)}"
         return Makefile
 
-    def write(self, filename = "Makefile", human_readable_object_names=False) -> None:
+    def write(self, filename="Makefile", human_readable_object_names=False) -> None:
         makefile = self.generate(human_readable_object_names)
         # Assume the file is relative to the root directory.
         if not os.path.isabs(filename):

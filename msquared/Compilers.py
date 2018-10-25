@@ -6,4 +6,4 @@ class BaseCompiler(object):
         self.debug = debug
         self.default_flags = default_flags
 
-GCC = BaseCompiler("g++", "-c", "-shared", "-g", default_flags=set(["--std=c++17", "-O3", "-flto", "-march=native"]))
+GCC = BaseCompiler("g++", "-c", "-shared -fPIC", "-g", default_flags=set(["--std=c++17", "-O3", "-flto", "-march=native"]))
