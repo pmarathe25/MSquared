@@ -116,13 +116,7 @@ class MGen(object):
         path = os.path.abspath(os.path.join(output_directory, name))
         target = Target(name, path, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "objs"), install_dir=install_dir)
         self.release_targets.append(target)
-        # Add debug target.
-        debug_name = utils.suffix_before_extension(name, "_debug")
-        debug_path = os.path.abspath(os.path.join(output_directory, debug_name))
-        debug_target = Target(debug_name, debug_path, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "dobjs"))
-        debug_target.add_flags(debug_target.compiler.debug)
-        self.debug_targets.append(debug_target)
-        return target, debug_target
+        return target
 
     """
     API Functions
@@ -173,13 +167,11 @@ class MGen(object):
         Returns:
             Target: A new target representing the library.
         """
-        target, debug_target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory, install_directory)
+        target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory, install_directory)
         # Add the shared flag.
         target.lflags.add(target.compiler.shared)
-        debug_target.lflags.add(debug_target.compiler.shared)
-        # Register this library and it's debug variant.
+        # Register this library.
         self.library_registry[target.name] = target.path
-        self.library_registry[debug_target.name] = debug_target.path
         return target
 
     def add_install(self, path: str, install_directory: str):
