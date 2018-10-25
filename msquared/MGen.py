@@ -72,38 +72,30 @@ class MGen(object):
 
         self.project_source_dirs: Set[str] = utils.locate_paths(project_source_dirs, self.root_dir, self.logger, ErrorType=FileNotFoundError)
         self.logger.debug(f"Using project source directories: {self.project_source_dirs}")
+
         # Only a single build directory should be found, and it should not be an existing directory
         # if provided as an absolute path. This way, '/' can't accidentally be a build directory.
-        if os.path.isabs(build_dir):
-            if os.path.exists(build_dir):
-                self.logger.error(f"Build directory already exists, will not overwrite.", IOError)
-            self.build_dir = build_dir
-        else:
-            self.build_dir: str = os.path.join(self.root_dir, build_dir)
-        self.logger.debug(f"Using project build directory: {self.build_dir}")
+        self.set_build_dir(build_dir)
 
-        # Compiler options
+        # Global compiler options
         self.compiler: BaseCompiler = compiler
         self.cflags: Set[str] = utils.convert_to_set(cflags) if cflags else compiler.default_flags
-
         project_include_dirs: Set[str] = utils.locate_paths(project_include_dirs, self.root_dir, self.logger, ErrorType=FileNotFoundError)
         self.logger.debug(f"Using project include directories: {project_include_dirs}")
         self.include_dirs: Set[str] = utils.convert_to_set(include_dirs) | project_include_dirs
-
         self.lflags: Set[str] = utils.convert_to_set(lflags) if lflags else compiler.default_flags
         self.link_dirs: Set[str] = utils.convert_to_set(link_dirs)
+
         # Keep track of user-defined targets.
         self.release_targets: List[Target] = []
         self.debug_targets: List[Target] = []
-        # Keep track of all the makefile targets as well.
-        self.makefile_targets: List[MakefileTarget] = []
         # Use a header manager.
         self.header_manager = HeaderManager(project_include_dirs, self.logger)
         # Map library names to the exact name used for linking them. When a library is added, or any target
         # with a library dependency is added, this is updated.
         self.library_registry: Dict[str, str] = {}
 
-    def _generate_target(self, name: str, sources: Set[str], libraries: Set[str], cflags: Set[str], include_dirs: Set[str], lflags: Set[str], link_dirs: Set[str], compiler: BaseCompiler, output_directory: str) -> Target:
+    def _generate_target(self, name: str, sources: Set[str], libraries: Set[str], cflags: Set[str], include_dirs: Set[str], lflags: Set[str], link_dirs: Set[str], compiler: BaseCompiler, output_directory: str, install_dir: str) -> Target:
         # Add global options to each executable. This makes the Targets returned to the user complete.
         # Sources and header dependencies.
         sources = utils.locate_paths(sources, self.project_source_dirs, self.logger, FileNotFoundError)
@@ -118,8 +110,9 @@ class MGen(object):
         link_dirs = utils.convert_to_set(link_dirs) | self.link_dirs
         compiler = compiler if compiler else self.compiler
         output_directory = output_directory if output_directory else self.build_dir
+        install_dir = os.path.join(self.root_dir, install_dir) if install_dir and not os.path.isabs(install_dir) else install_dir
         # Add release target.
-        target = Target(name, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, out_dir=output_directory, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "objs"))
+        target = Target(name, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, out_dir=output_directory, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "objs"), install_dir=install_dir)
         self.release_targets.append(target)
         # Add debug target.
         debug_target = Target(utils.suffix_before_extension(name, "_debug"), source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, out_dir=output_directory, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "dobjs"))
@@ -131,7 +124,16 @@ class MGen(object):
     API Functions
     """
     # TODO: Update all docstrings here.
-    def add_executable(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None, output_directory=None) -> Target:
+    def set_build_dir(self, build_dir: str) -> None:
+        if os.path.isabs(build_dir):
+            if os.path.exists(build_dir):
+                self.logger.error(f"Directory {build_dir} already exists, will not use as build directory.", OSError)
+            self.build_dir = build_dir
+        else:
+            self.build_dir: str = os.path.join(self.root_dir, build_dir)
+        self.logger.debug(f"Using project build directory: {self.build_dir}")
+
+    def add_executable(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None, output_directory=None, install_directory=None) -> Target:
         """
         Adds an executable to be generated based on the specified source files.
 
@@ -148,9 +150,9 @@ class MGen(object):
         Returns:
             Target: A new target representing the executable.
         """
-        return self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory)
+        return self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory, install_directory)
 
-    def add_library(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None, output_directory=None) -> Target:
+    def add_library(self, name: str, sources=set(), libraries=set(), cflags=set(), include_dirs=set(), lflags=set(), link_dirs=set(), compiler=None, output_directory=None, install_directory=None) -> Target:
         """
         Adds a library to be generated based on the specified source files.
 
@@ -167,7 +169,7 @@ class MGen(object):
         Returns:
             Target: A new target representing the library.
         """
-        target, debug_target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory)
+        target, debug_target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory, install_directory)
         # Add the shared flag.
         target.lflags.add(target.compiler.shared)
         debug_target.lflags.add(debug_target.compiler.shared)
@@ -181,31 +183,40 @@ class MGen(object):
         Generates a Makefile.
         """
         # Walk over all the targets. For each one, we add an intermediate target for each source file.
+        build_targets = set()
+        phony_targets = []
+        install_targets = []
+        uninstall_targets = []
         for target in self.release_targets + self.debug_targets:
-            self.makefile_targets.extend(target.generate_makefile_targets(self.library_registry))
+            build_targets |= utils.convert_to_set(target.generate_build_targets(self.library_registry))
+            phony_targets.extend(target.generate_phony_target())
+            install_targets.extend(target.generate_install_target())
+            uninstall_targets.extend(target.generate_uninstall_target())
 
         # Add a clean target.
-        self.makefile_targets.append(MakefileTarget(name="clean", commands=f"rm -rf {self.build_dir}", phony=True, help=f"Removes the entire build directory"))
+        build_targets.add(MakefileTarget(name="clean", commands=f"rm -rf {self.build_dir}", phony=True, help=f"Removes the entire build directory."))
+
+        # Add an install/uninstall target.
+        install_targets.append(MakefileTarget(name="install", dependencies=[tgt.name for tgt in install_targets], phony=True, help=f"Runs all other install targets."))
+        uninstall_targets.append(MakefileTarget(name="uninstall", dependencies=[tgt.name for tgt in uninstall_targets], phony=True, help=f"Runs all other uninstall targets."))
 
         # Create an all target as the first target, along with release and debug targets.
-        self.makefile_targets.insert(0, MakefileTarget(name="all", dependencies=["release", "debug"], phony=True, help=f"Builds all targets specified in this Makefile"))
-        self.makefile_targets.insert(1, MakefileTarget(name="release", dependencies=[tgt.path for tgt in self.release_targets], phony=True, help=f"Builds release targets specified in this Makefile"))
-        self.makefile_targets.insert(2, MakefileTarget(name="debug", dependencies=[tgt.path for tgt in self.debug_targets], phony=True, help=f"Builds debug targets specified in this Makefile"))
+        phony_targets.insert(0, MakefileTarget(name="all", dependencies=["release", "debug"], phony=True, help=f"Builds all targets specified in this Makefile."))
+        phony_targets.insert(1, MakefileTarget(name="release", dependencies=[tgt.path for tgt in self.release_targets], phony=True, help=f"Builds release targets specified in this Makefile."))
+        phony_targets.insert(2, MakefileTarget(name="debug", dependencies=[tgt.path for tgt in self.debug_targets], phony=True, help=f"Builds debug targets specified in this Makefile."))
 
-        # Unique-ify the targets
-        self.makefile_targets = list(dict.fromkeys(self.makefile_targets))
+
+        all_targets = phony_targets + utils.convert_to_list(build_targets) + install_targets + uninstall_targets
 
         # Add a help target.
-        help_target = MakefileTarget(name="help", phony=True, commands=[f'echo "\t{t.name}: {t.help}"' for t in self.makefile_targets if t.help])
-        self.makefile_targets.append(help_target)
+        help_target = MakefileTarget(name="help", phony=True, commands=[f'echo "\t{tgt.name}: {tgt.help}"' for tgt in all_targets if tgt.help])
+        all_targets.append(help_target)
 
         # Create the final Makefile.
         target_sep = "\n\n"
         # Add verbosity options
         verbosity = f"ifdef VERBOSE\n\tAT=\nelse\n\tAT=@\nendif"
-        Makefile = f"{MGen._get_makefile_header()}\n{verbosity}{utils.prefix_join(self.makefile_targets, target_sep)}"
-        # Remove all MakefileTargets
-        self.makefile_targets.clear()
+        Makefile = f"{MGen._get_makefile_header()}\n{verbosity}{utils.prefix_join(all_targets, target_sep)}"
         return Makefile
 
     def write(self, filename = "Makefile") -> None:

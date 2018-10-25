@@ -28,6 +28,12 @@ def wrap(pre: str, input_string: str, post: str) -> str:
 def hasext(path: str) -> bool:
     return bool(os.path.splitext(path)[1])
 
+# Check if a directory or file requires root permissions to access or create.
+def requires_root(dirname: str) -> bool:
+    while not os.path.exists(dirname):
+        dirname = os.path.abspath(os.path.join(dirname, os.pardir))
+    return not os.access(dirname, os.W_OK)
+
 # Joins elements of an iterable with a prefix.
 def prefix_join(iterable, prefix = ' ') -> str:
     if len(iterable) > 0:
