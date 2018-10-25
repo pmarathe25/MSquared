@@ -15,13 +15,13 @@ REQUIRED = [
     "typing"
 ]
 
-here = os.path.abspath(os.path.dirname(__file__))
+curdir = os.path.abspath(os.path.dirname(__file__))
 
 # Import the README and use it as the long-description.
-with open(os.path.join(here, "README.md")) as f:
+with open(os.path.join(curdir, "README.md")) as f:
     long_description = '\n' + f.read()
 
-with open(os.path.join(here, NAME, "__version__.py")) as f:
+with open(os.path.join(curdir, NAME, "__version__.py")) as f:
     exec(f.read())
 
 setup(
