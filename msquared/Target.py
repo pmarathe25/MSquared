@@ -103,7 +103,7 @@ class Target(object):
         # Add compilation command.
         commands.append(f'echo -e "\\e[32mCompiling {object_path}\\e[0m"')
         commands.append(f"{self.compiler.name} {source} -o {object_path}{utils.prefix_join(self.include_dirs, ' -I')} {' '.join(self.cflags)} {self.compiler.compile_only}")
-        return MakefileTarget(name=object_path, dependencies=self.source_map[source], commands=commands)
+        return MakefileTarget(name=object_path, dependencies=set([source]) | self.source_map[source], commands=commands)
 
     # TODO: Docstrings.
     def generate_build_targets(self, library_registry: Dict[str, str], human_readable_object_names=False) -> List[MakefileTarget]:

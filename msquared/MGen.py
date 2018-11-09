@@ -174,7 +174,7 @@ class MGen(object):
         self.library_registry[target.name] = target.path
         return target
 
-    def add_install(self, path: str, install_directory: str):
+    def add_install(self, path: str, install_directory: str) -> Target:
         # FIXME: This may cause name collisions for files with the same name but different paths.
         name = os.path.basename(path)
         path = os.path.join(self.root_dir, path) if not os.path.isabs(path) else path
