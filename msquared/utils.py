@@ -48,8 +48,10 @@ def convert_to(obj, ContainerType):
         return obj
     elif is_nonstring_iterable(obj):
         return ContainerType(obj)
-    else:
+    elif obj:
         return ContainerType([obj])
+    else:
+        return ContainerType()
 
 def convert_to_set(obj):
     return convert_to(obj, set)
