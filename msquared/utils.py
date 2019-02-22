@@ -86,7 +86,7 @@ def locate_paths(paths: Set[str], dirs: Set[str], logger, ErrorType: type = None
                 logger.debug(f"Found {path} in {dir}. Using absolute path: {abspath}")
                 return abspath
         err_msg = f"Could not find {path} in directories: {dirs}."
-        logger.warning(err_msg, ErrorType)
+        logger.error(err_msg, ErrorType)
 
     paths = convert_to_set(paths)
     dirs = convert_to_set(dirs)

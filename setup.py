@@ -12,7 +12,6 @@ REQUIRES_PYTHON = ">=3.6.0"
 
 # What packages are required for this module to be executed?
 REQUIRED = [
-    "typing"
 ]
 
 curdir = os.path.abspath(os.path.dirname(__file__))

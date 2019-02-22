@@ -28,25 +28,15 @@ class Logger(object):
             print(f"{self._message_prefix(stack_level)} {severity.name}: {message}")
 
     def debug(self, message):
-        self.log(message, severity = Logger.Severity.DEBUG, stack_level = 3)
+        self.log(message, severity=Logger.Severity.DEBUG, stack_level=3)
 
     def info(self, message):
-        self.log(message, severity = Logger.Severity.INFO, stack_level = 3)
+        self.log(message, severity=Logger.Severity.INFO, stack_level=3)
 
-    def warning(self, message, ErrorType: type = None):
-        """
-        Logs a warning level message, or raises an error if ErrorType is provided.
+    def warning(self, message, ErrorType: type=None):
+        self.log(message, severity=Logger.Severity.WARNING, stack_level=3)
 
-        Args:
-            message (str): The message to log.
-            ErrorType (type): The type of error to raise. If set to None, no error is raised.
-        """
-        if ErrorType:
-            raise ErrorType(f"{self._message_prefix(2)} {message}")
-        else:
-            self.log(message, severity = Logger.Severity.WARNING, stack_level = 3)
-
-    def error(self, message, ErrorType: type = None):
+    def error(self, message, ErrorType: type=None):
         """
         Logs an error level message, or raises an error if ErrorType is provided.
 
@@ -57,4 +47,4 @@ class Logger(object):
         if ErrorType:
             raise ErrorType(f"{self._message_prefix(2)} {message}")
         else:
-            self.log(message, severity = Logger.Severity.ERROR, stack_level = 3)
+            self.log(message, severity=Logger.Severity.ERROR, stack_level = 3)

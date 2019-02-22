@@ -1,5 +1,5 @@
 build/
 dist/
 *.egg-info
-test/*
-!test/MSquaredTest.py
+test/build/*
+!test/test_msquared.py

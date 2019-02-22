@@ -115,8 +115,16 @@ class MGen(object):
         # Add release target.
         path = os.path.abspath(os.path.join(output_directory, name))
         target = Target(name, path, source_map, libraries, cflags, include_dirs, lflags, link_dirs, compiler, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "objs"), install_dir=install_dir)
+
+        debug_cflags = cflags | set([compiler.debug])
+        debug_lflags = lflags | set([compiler.debug])
+        name, ext = os.path.splitext(name)
+        debug_name = f"{name}_debug{ext}"
+        debug_path = os.path.join(os.path.dirname(path), debug_name)
+        debug_target = Target(debug_name, debug_path, source_map, libraries, debug_cflags, include_dirs, debug_lflags, link_dirs, compiler, logger=self.logger, obj_out_dir=os.path.join(self.build_dir, "dobjs"), install_dir=install_dir)
         self.release_targets.append(target)
-        return target
+        self.debug_targets.append(debug_target)
+        return target, debug_target
 
     """
     API Functions
@@ -167,12 +175,14 @@ class MGen(object):
         Returns:
             Target: A new target representing the library.
         """
-        target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory, install_directory)
-        # Add the shared flag.
+        target, debug_target = self._generate_target(name, sources, libraries, cflags, include_dirs, lflags, link_dirs, compiler, output_directory, install_directory)
+        # Add the shared flag and register this library.
         target.lflags.add(target.compiler.shared)
-        # Register this library.
         self.library_registry[target.name] = target.path
-        return target
+        # And for debug
+        debug_target.lflags.add(debug_target.compiler.shared)
+        self.library_registry[debug_target.name] = debug_target.path
+        return target, debug_target
 
     def add_install(self, path: str, install_directory: str) -> Target:
         # FIXME: This may cause name collisions for files with the same name but different paths.
@@ -193,6 +203,18 @@ class MGen(object):
         phony_targets = []
         install_targets = []
         uninstall_targets = []
+        # Walk over debug targets and map any internal libraries
+        for target in self.debug_targets:
+            new_libs = set()
+            for lib in target.libraries:
+                if lib in self.library_registry:
+                    name, ext = os.path.splitext(lib)
+                    debug_lib = f"{name}_debug{ext}"
+                    new_libs.add(debug_lib)
+                else:
+                    new_libs.add(lib)
+            target.libraries = new_libs
+
         for target in self.release_targets + self.debug_targets + self.install_targets:
             build_targets |= utils.convert_to_set(target.generate_build_targets(self.library_registry, human_readable_object_names))
             phony_targets.extend(target.generate_phony_target())
