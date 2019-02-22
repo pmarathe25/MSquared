@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import os
 from setuptools import find_packages, setup, Command
+import msquared
 
 # Package meta-data.
 NAME = "msquared"
@@ -20,12 +21,9 @@ curdir = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(curdir, "README.md")) as f:
     long_description = '\n' + f.read()
 
-with open(os.path.join(curdir, NAME, "__version__.py")) as f:
-    exec(f.read())
-
 setup(
     name=NAME,
-    version=__version__,
+    version=msquared.__version__,
     description=DESCRIPTION,
     long_description=long_description,
     author=AUTHOR,

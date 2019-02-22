@@ -187,7 +187,7 @@ class MGen(object):
     def add_install(self, path: str, install_directory: str) -> Target:
         # FIXME: This may cause name collisions for files with the same name but different paths.
         name = os.path.basename(path)
-        path = os.path.join(self.root_dir, path) if not os.path.isabs(path) else path
+        path = os.path.realpath(os.path.join(self.root_dir, path)) if not os.path.isabs(path) else path
         if not os.path.exists(path):
             self.logger.error(f"Could not find {path}", FileNotFoundError)
         target = Target(name=name, path=path, install_dir=install_directory)
